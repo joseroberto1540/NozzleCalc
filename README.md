@@ -2,7 +2,7 @@
 
 **Optimized Rocket Nozzle Geometry Calculator**
 
-NozzleCalc is a specialized application designed to calculate optimized geometries for rocket engines (Rao Approximation/Bell Nozzle) through simple inputs based on project conception and internal ballistics data.
+NozzleCalc is a specialized application designed to calculate optimized geometries for rocket motor/engines (Rao Approximation/Bell Nozzle) through simple inputs based on project conception and internal ballistics data.
 
 Developed by the **Kosmos Rocketry** Propulsion Sector.
 
