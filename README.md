@@ -33,7 +33,7 @@ No installation is required. Download the latest portable version for Windows:
 
 1.  **Download:** Click the link above to download the executable file.
 2.  **Run:** Double-click `NozzleCalc.exe`. Windows might ask for permission since it's a new engineering tool; allow it to run.
-3.  **Input Data:** Enter your engine parameters in the sidebar (Throat Radius, Chamber Pressure, Exhaust Pressure, etc.).
+3.  **Input Data:** Enter your motor/engine parameters in the sidebar (Throat Radius, Chamber Pressure, Exhaust Pressure, etc.).
 4.  **Compute:** Press `ENTER` or click "COMPUTE GEOMETRY".
 5.  **Analyze:**
     * Use the **2D Visualization** tab to inspect the geometry. Hover over the graph to see coordinates.
