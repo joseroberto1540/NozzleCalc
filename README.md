@@ -12,7 +12,7 @@ Developed by the **Kosmos Rocketry** Propulsion Sector.
 
 No installation is required. Download the latest portable version for Windows:
 
-[**⬇️ DOWNLOAD NozzleCalcPro.exe (Latest Version)**](https://github.com/YOUR_USERNAME/REPO_NAME/releases/latest/download/NozzleCalcPro.exe)
+[**⬇️ DOWNLOAD NozzleCalc.exe (Latest Version)**](https://github.com/YOUR_USERNAME/REPO_NAME/releases/latest/download/NozzleCalcPro.exe)
 
 *The application features an **Auto-Update** system. It will automatically check for new versions upon launch.*
 
