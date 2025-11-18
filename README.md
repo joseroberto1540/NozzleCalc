@@ -1,4 +1,4 @@
-# NozzleCalc Pro 🚀
+# NozzleCalc 🚀
 
 **Optimized Rocket Nozzle Geometry Calculator**
 
