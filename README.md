@@ -53,9 +53,14 @@ Any use of this software, whether for academic, personal, or commercial projects
 
 ## 📦 Updates
 
-### v3.0.0 - Initial Release
-* Core Rao Approximation algorithm implemented.
-* Interactive Matplotlib graph with HUD and Snapping.
-* Project file system (Save/Load/Save As).
-* Integrated Auto-Updater via GitHub Releases.
-* Bilingual support (EN/PT).
+### v3.2.2 - What's New:
+* **🚀 Propellant Presets:** Added a dropdown menu with common solid propellants (KNSB, KNDX, APCP, etc.). Selecting a preset automatically fills and locks the Specific Heat Ratio ($k$) field to prevent errors.
+* **🔍 Advanced Visualization:**
+    * **Zoom & Pan:** Interactive graph with scroll-to-zoom and click-to-drag panning.
+    * **Reset View:** Added a button to instantly restore the original view.
+    * **Conical Reference:** Toggleable comparison with a conical nozzle based on the user's divergent angle.
+* **⚙️ Physics & Geometry:**
+    * **Throat Rounding Factor:** New input to adjust the curvature radius at the throat section.
+    * **Convergence Check:** Enhanced logic to detect invalid geometries (inverted curvature) with a visual Status Indicator (Green/Red).
+* **🎨 UI Improvements:** New Top Toolbar for file management and sidebar dedicated to inputs.
+* **🐛 Bug Fixes:** Fixed Windows Taskbar icon persistence and JSON project loading issues.
