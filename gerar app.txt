@@ -1,0 +1,1 @@
+pyinstaller --noconsole --onefile --name="NozzleCalc" --icon="icon.ico" --collect-all customtkinter --add-data "manual.pdf;." main.py
