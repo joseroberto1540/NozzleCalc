@@ -13,7 +13,7 @@ Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing
 
 ## 📥 Installation & Download
 
-### Option A: Portable Executable (Recommended)
+### Portable Executable 
 No Python installation is required. Just download, run, and design.
 
 1.  Go to the **[Latest Release Page](https://github.com/joseroberto1540/NozzleCalc/releases)**.
@@ -37,6 +37,7 @@ No Python installation is required. Just download, run, and design.
 * **Convergence Checker:** Real-time validation engine that checks for physical impossibilities, such as inverted curvature or loop-backs. Displays a **GREEN (Converged)** or **RED (Diverged)** status instantly.
 * **Throat Rounding Factor:** Fine-tune the curvature radius at the throat ($R_{div}$) to adjust for manufacturing constraints or thermal considerations.
 * **Conical Comparison:** Toggle a 15° (or custom angle) conical nozzle reference overlay to visualize length and mass savings.
+* **Efficiente Calculation:** A well-designed Bell nozzle readily achieves an efficiency factor of at least 96.5%, even while being shorter than an equivalent conical nozzle. The system allows users to generate the nozzle profile and evaluate its efficiency in real-time.
 
 ### 🖥️ Interactive Visualization
 * **Dynamic Plotting:** High-resolution rendering using Matplotlib embedded in a modern UI.

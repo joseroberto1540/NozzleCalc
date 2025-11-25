@@ -337,7 +337,7 @@ class NozzleCalculator:
 
 # --- 2. CAMADA DE VIEW (INTERFACE GRÁFICA) ---
 class App(ctk.CTk):
-    CURRENT_VERSION = "3.3.17"
+    CURRENT_VERSION = "3.3.18"
     
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_URL = "https://github.com/joseroberto1540/NozzleCalc/releases/latest"
@@ -687,16 +687,14 @@ class App(ctk.CTk):
         if self.last_result: self._update_plot(self.last_result, self.last_input_ang_cov)
 
     def open_manual(self):
-        pdf_name = "manual.pdf" 
-        pdf_path = resource_path(pdf_name)
-        if os.path.exists(pdf_path):
-            try:
-                if sys.platform == 'win32': os.startfile(pdf_path)
-                else: webbrowser.open(pdf_path)
-            except Exception as e: tk.messagebox.showerror("Error", f"Could not open PDF: {e}")
-        else:
-            t = TRANSLATIONS[self.current_lang]
-            tk.messagebox.showerror("Error", f"{t['err_pdf']}\nPath: {pdf_path}")
+        """Abre o Manual Teórico diretamente no navegador (GitHub)."""
+        # Substitua esta URL pela URL real da sua página ou arquivo Markdown
+        THEORY_URL = "https://github.com/joseroberto1540/NozzleCalc/wiki/User-Manual-and-Geometry-Theory/"
+        
+        try:
+            webbrowser.open(THEORY_URL)
+        except Exception as e:
+            tk.messagebox.showerror("Erro", f"Não foi possível abrir o navegador:\n{e}")
 
     def run_simulation(self):
         t = TRANSLATIONS[self.current_lang]
@@ -865,7 +863,7 @@ class App(ctk.CTk):
         self.ax.scatter([0], [tr], color='orange', s=40, zorder=5, label=t["legend_center"])
 
         bbox_style = dict(boxstyle="round,pad=0.3", fc="black", ec="none", alpha=0.7)
-        self.ax.text(qx, qy + 0.15*tr, f"Q({qx:.1f}, {qy:.1f})", 
+        self.ax.text(qx, qy + 0.15*tr, f"Q({qx:.3f}, {qy:.3f})", 
                      color='#FFFF00', fontsize=10, ha='center', va='bottom', weight='bold', bbox=bbox_style)
         
         tangent_n_x = nx + tr*0.8 * math.cos(math.radians(theta_n_deg))
