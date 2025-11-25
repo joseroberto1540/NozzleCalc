@@ -86,6 +86,10 @@ TRANSLATIONS = {
         
         "rpt_header": "--- SIMULATION RESULTS ---",
         "rpt_geo": "GEOMETRY",
+        "rpt_perf": "PERFORMANCE (ESTIMATED)",
+        "rpt_lambda": "Divergence Eff. (λ)",
+        "rpt_cf_ideal": "Ideal Thrust Coeff (Cf)",
+        "rpt_cf_real": "Est. Real Cf (λ * 0.98)",
         "rpt_angles": "ANGLES (RAO)",
         "rpt_ctrl": "CONTROL POINTS",
         "rpt_L": "Length (L)",
@@ -115,7 +119,7 @@ TRANSLATIONS = {
         "btn_open": "Abrir Projeto",
         "btn_save": "Salvar",
         "btn_save_as": "Salvar Como...",
-        "btn_run": "COMPUTAR GEOMETRY (ENTER)",
+        "btn_run": "COMPUTAR GEOMETRIA (ENTER)",
         "btn_manual": "📘 Manual Teórico",
         "btn_reset_view": "Resetar Vista ⟲",
         "tab_plot": "2D Visualization",
@@ -143,6 +147,10 @@ TRANSLATIONS = {
         
         "rpt_header": "--- RESULTADOS DA SIMULAÇÃO ---",
         "rpt_geo": "GEOMETRIA",
+        "rpt_perf": "PERFORMANCE (ESTIMADA)",
+        "rpt_lambda": "Eficiência Diverg. (λ)",
+        "rpt_cf_ideal": "Coef. Empuxo Ideal (Cf)",
+        "rpt_cf_real": "Cf Real Est. (λ * 0.98)",
         "rpt_angles": "ÂNGULOS (RAO)",
         "rpt_ctrl": "PONTOS DE CONTROLE",
         "rpt_L": "Comprimento (L)",
@@ -183,6 +191,9 @@ class NozzleResult:
     rounding_factor: float
     cone_ref_length: float
     divergent_angle_input: float
+    lambda_eff: float
+    cf_ideal: float
+    cf_est: float
 
 class NozzleCalculator:
     _ARATIO = np.array([4, 5, 10, 20, 30, 40, 50, 100])
@@ -240,6 +251,36 @@ class NozzleCalculator:
         
         return ln, math.radians(final_theta_n), math.radians(final_theta_e)
 
+    def calculate_performance(self, k: float, pc: float, pe: float, theta_e_deg: float, eps: float):
+        """Calcula Lambda e Cf."""
+        # 1. Eficiência de Divergência (Lambda)
+        theta_rad = math.radians(theta_e_deg)
+        lam = (1 + math.cos(theta_rad)) / 2
+
+        # 2. Cf Ideal (Isentrópico)
+        # Converter Pe (atm) para MPa para a razão de pressão ficar correta
+        pe_mpa = pe / 9.86923 
+        pratio = pe_mpa / pc
+
+        # Proteção matemática para evitar raiz de negativo se Pe > Pc (erro de input)
+        if pratio >= 1.0:
+            return lam, 0.0, 0.0
+
+        term1 = (2 * k**2) / (k - 1)
+        term2 = (2 / (k + 1)) ** ((k + 1) / (k - 1))
+        term3 = 1 - (pratio) ** ((k - 1) / k)
+        
+        cf_ideal = math.sqrt(term1 * term2 * term3)
+        
+        # Adiciona termo de pressão (assumindo expansão ótima Pe=Pa para simplificar o Cf base)
+        # Se quiser adicionar o termo (Pe-Pa)/Pc * eps, precisaria pedir Pa ao usuário.
+        # Por padrão, Cf de foguete costuma ser reportado no vácuo ou ótimo.
+        
+        # 3. Cf Real Estimado (Lambda * 0.98 de perdas viscosas/atrito)
+        cf_real = cf_ideal * lam * 0.98
+
+        return lam, cf_ideal, cf_real
+
     def compute(self, tr: float, k: float, pc: float, pe: float, 
                ang_div: float, ang_cov: float, length_pct: float, rounding_factor: float) -> NozzleResult:
         
@@ -249,16 +290,17 @@ class NozzleCalculator:
         exhaust_radius = math.sqrt(exhaust_area / math.pi)
         
         bell_length, theta_n_rad, theta_e_rad = self.get_wall_angles(eps, tr, length_pct, ang_div)
-        
         cone_ref_length = (exhaust_radius - tr) / math.tan(math.radians(ang_div))
-        
         real_percent = (bell_length / cone_ref_length) * 100 if cone_ref_length else 0
         
         theta_n_deg = math.degrees(theta_n_rad)
         theta_e_deg = math.degrees(theta_e_rad)
         
+        # --- CÁLCULO DA PERFORMANCE ---
+        lam, cf_i, cf_r = self.calculate_performance(k, pc, pe, theta_e_deg, eps)
+
+        # ... (Cálculo de coordenadas nx, ny, etc continua igual) ...
         r_div_rel = 0.382 * rounding_factor 
-        
         angle_rel = math.radians(theta_n_deg - 90)
         nx = r_div_rel * tr * math.cos(angle_rel)
         ny = (r_div_rel * tr * math.sin(angle_rel)) + (tr + r_div_rel * tr)
@@ -287,12 +329,15 @@ class NozzleCalculator:
             angles={'theta_n': theta_n_deg, 'theta_e': theta_e_deg},
             rounding_factor=rounding_factor,
             cone_ref_length=cone_ref_length,
-            divergent_angle_input=ang_div
+            divergent_angle_input=ang_div,
+            lambda_eff=lam,
+            cf_ideal=cf_i,
+            cf_est=cf_r
         )
 
 # --- 2. CAMADA DE VIEW (INTERFACE GRÁFICA) ---
 class App(ctk.CTk):
-    CURRENT_VERSION = "3.3.16"
+    CURRENT_VERSION = "3.3.17"
     
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_URL = "https://github.com/joseroberto1540/NozzleCalc/releases/latest"
@@ -681,6 +726,12 @@ class App(ctk.CTk):
     def _update_text_output(self, res: NozzleResult):
         t = TRANSLATIONS[self.current_lang]
         self.txt_output.delete("1.0", "end")
+
+        if res.cf_ideal > 0:
+            total_eff = (res.cf_est / res.cf_ideal) * 100
+        else:
+            total_eff = 0.0
+
         report = (
             f"{t['rpt_header']}\n\n"
             f"{t['rpt_geo']}:\n"
@@ -690,6 +741,13 @@ class App(ctk.CTk):
             f"{t['rpt_Re']}:    {res.exhaust_radius:.4f} mm\n"
             f"{t['rpt_At']}:    {res.throat_area:.4f} mm²\n"
             f"{t['rpt_Ae']}:    {res.exhaust_area:.4f} mm²\n\n"
+            
+            f"{t['rpt_perf']}:\n"
+            f"{t['rpt_lambda']}:   {res.lambda_eff:.4f}\n"
+            f"{t['rpt_cf_ideal']}: {res.cf_ideal:.4f}\n"
+            f"{t['rpt_cf_real']}:  {res.cf_est:.4f}\n"
+            f"Total Efficiency:    {total_eff:.2f}%\n\n" # <--- LINHA NOVA
+            
             f"{t['rpt_angles']}:\n"
             f"Theta N: {res.angles['theta_n']:.3f}°\n"
             f"Theta E: {res.angles['theta_e']:.3f}°\n\n"
@@ -707,6 +765,7 @@ class App(ctk.CTk):
         is_subsequent_run = self.base_xlim is not None
 
         self.ax.clear()
+        
         tr = res.throat_radius
         nx, ny = res.control_points['N']
         qx, qy = res.control_points['Q']
@@ -728,6 +787,7 @@ class App(ctk.CTk):
         self.ax.set_xlabel(t["axis_x"], color='white')
         self.ax.set_ylabel(t["axis_y"], color='white')
 
+        # --- STATUS DE CONVERGÊNCIA ---
         g_x, g_y = 0, tr
         cond1 = (nx >= g_x) and (ny >= g_y)
         cond2 = (ex >= qx) and (ey >= qy)
@@ -741,10 +801,37 @@ class App(ctk.CTk):
         is_converged = cond1 and cond2 and cond3 and cond4
         status_text = t["status_conv"] if is_converged else t["status_div"]
         status_color = "#2ECC71" if is_converged else "#E74C3C"
-        self.ax.text(0.5, 1.12, status_text, transform=self.ax.transAxes, ha='center', va='bottom',
+        
+        # Caixa Centralizada (Convergiu/Divergiu)
+        self.ax.text(0.5, 1.12, status_text, 
+                     transform=self.ax.transAxes, ha='center', va='bottom',
                      color='white', weight='bold', fontsize=10,
                      bbox=dict(boxstyle="round,pad=0.5", fc=status_color, ec="none", alpha=0.9))
 
+        # --- [NOVO] INDICADOR DE EFICIÊNCIA ---
+        if res.cf_ideal > 0:
+            eff_val = (res.cf_est / res.cf_ideal) * 100
+        else:
+            eff_val = 0.0
+
+        # Lógica de Cores (Semáforo)
+        if eff_val > 96.0:
+            eff_bg = "#2ECC71" # Verde
+            eff_fg = "white"
+        elif eff_val >= 92.0:
+            eff_bg = "#F1C40F" # Amarelo/Ouro
+            eff_fg = "black"   # Preto para contraste
+        else:
+            eff_bg = "#E74C3C" # Vermelho
+            eff_fg = "white"
+
+        # Caixa à Direita (Eficiência)
+        self.ax.text(0.85, 1.12, f"EFF: {eff_val:.2f}%", 
+                     transform=self.ax.transAxes, ha='center', va='bottom',
+                     color=eff_fg, weight='bold', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.5", fc=eff_bg, ec="none", alpha=0.9))
+
+        # --- PLOTAGEM GEOMETRIA ---
         t_param = np.linspace(0, 1, 100)
         bx = (1 - t_param)**2 * nx + 2 * (1 - t_param) * t_param * qx + t_param**2 * ex
         by = (1 - t_param)**2 * ny + 2 * (1 - t_param) * t_param * qy + t_param**2 * ey
@@ -780,11 +867,13 @@ class App(ctk.CTk):
         bbox_style = dict(boxstyle="round,pad=0.3", fc="black", ec="none", alpha=0.7)
         self.ax.text(qx, qy + 0.15*tr, f"Q({qx:.1f}, {qy:.1f})", 
                      color='#FFFF00', fontsize=10, ha='center', va='bottom', weight='bold', bbox=bbox_style)
+        
         tangent_n_x = nx + tr*0.8 * math.cos(math.radians(theta_n_deg))
         tangent_n_y = ny + tr*0.8 * math.sin(math.radians(theta_n_deg))
         self.ax.plot([nx, tangent_n_x], [ny, tangent_n_y], ':', color='orange')
         self.ax.text(tangent_n_x, tangent_n_y, f"θN={theta_n_deg:.3f}°", 
                      color='orange', fontsize=10, weight='bold', bbox=bbox_style)
+
         tangent_e_x = ex + tr*0.8 * math.cos(math.radians(theta_e_deg))
         tangent_e_y = ey + tr*0.8 * math.sin(math.radians(theta_e_deg))
         self.ax.plot([ex, tangent_e_x], [ey, tangent_e_y], ':', color='magenta')
@@ -798,7 +887,8 @@ class App(ctk.CTk):
 
         self.ax.set_aspect('equal')
         self.ax.legend(loc='upper left', facecolor='#333333', labelcolor='white', framealpha=0.9, fontsize=8)
-        self.canvas.draw()
+        
+        self.canvas.draw() 
         self.base_xlim = self.ax.get_xlim()
         self.base_ylim = self.ax.get_ylim()
 
