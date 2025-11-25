@@ -11,6 +11,17 @@ Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing
 
 ---
 
+## 📥 Installation & Download
+
+### Option A: Portable Executable (Recommended)
+No Python installation is required. Just download, run, and design.
+
+1.  Go to the **[Latest Release Page](https://github.com/joseroberto1540/NozzleCalc/releases)**.
+2.  Download the `NozzleCalc.exe` file.
+3.  Run the file. *(Windows might flag it as unrecognized software; this is normal for unsigned engineering tools. Click "Run Anyway").*
+
+---
+
 ## ✨ Key Features
 
 ### 🧪 Propulsion Physics
@@ -39,16 +50,6 @@ Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing
 * **Integrated Documentation:** A complete Theory Manual (PDF) is embedded within the application.
 
 ---
-
-## 📥 Installation & Download
-
-### Option A: Portable Executable (Recommended)
-No Python installation is required. Just download, run, and design.
-
-1.  Go to the **[Latest Release Page](https://github.com/joseroberto1540/NozzleCalc/releases)**.
-2.  Download the `NozzleCalc.exe` file.
-3.  Run the file. *(Windows might flag it as unrecognized software; this is normal for unsigned engineering tools. Click "Run Anyway").*
-
 
 ## 🛠️ User Guide
 
