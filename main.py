@@ -292,7 +292,7 @@ class NozzleCalculator:
 
 # --- 2. CAMADA DE VIEW (INTERFACE GRÁFICA) ---
 class App(ctk.CTk):
-    CURRENT_VERSION = "3.3.7"
+    CURRENT_VERSION = "3.3.8"
     
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_URL = "https://github.com/joseroberto1540/NozzleCalc/releases/latest"
@@ -815,25 +815,52 @@ class App(ctk.CTk):
 
     def check_for_updates(self):
         try:
+            # 1. TÁTICA ANTI-CACHE (Cache Busting)
+            # Adicionamos um número aleatório no final da URL (?dummy=12345)
+            # Isso obriga o GitHub a não usar a versão velha salva na memória dele.
             url_no_cache = f"{self.VERSION_URL}?dummy={random.randint(1, 100000)}"
+            
+            # print(f"Checando updates em: {url_no_cache}") # Para debug no terminal
+            
+            # Timeout curto para não travar o app se a internet estiver ruim
             response = requests.get(url_no_cache, timeout=5)
+            
             if response.status_code == 200:
                 latest_version = response.text.strip()
+                
+                # print(f"Local: {self.CURRENT_VERSION} | Remota: {latest_version}") # Para debug
+                
+                # Compara as versões
                 if version.parse(latest_version) > version.parse(self.CURRENT_VERSION):
                     t = TRANSLATIONS[self.current_lang]
+                    
                     title = "Update Available" if self.current_lang == "en" else "Atualização Disponível"
+                    
                     msg = (f"New version {latest_version} is available!\n"
                            f"Current version: {self.CURRENT_VERSION}\n\n"
                            f"Do you want to download it now?") if self.current_lang == "en" else \
                           (f"Nova versão {latest_version} disponível!\n"
                            f"Sua versão: {self.CURRENT_VERSION}\n\n"
                            f"Deseja baixar agora?")
+
+                    # Mostra a janela de pergunta
+                    # IMPORTANTE: Usamos self.after para garantir que a janela principal já existe
+                    # antes de mostrar o popup, evitando travamentos.
                     answer = messagebox.askyesno(title, msg)
+                    
                     if answer:
                         webbrowser.open(self.RELEASE_URL)
                         self.on_closing()
+            else:
+                # Se o link estiver quebrado ou privado, imprime no console (se estiver rodando pelo VS Code)
+                print(f"Erro ao acessar GitHub: Status {response.status_code}")
+
         except Exception as e:
-            pass
+            # Se der erro de internet ou biblioteca, imprime no console
+            print(f"Erro no Update Check: {e}")
+            # Se quiser ver o erro na tela durante testes, descomente a linha abaixo:
+            # messagebox.showerror("Debug Update Error", str(e))
+        
 
 if __name__ == "__main__":
     app = App()
