@@ -24,7 +24,7 @@ ctk.set_default_color_theme("blue")
 
 # --- CORREÇÃO DO ÍCONE NA BARRA DE TAREFAS (WINDOWS) ---
 try:
-    myappid = 'kosmos.nozzlecalc.pro.v3.17' # Versão Final
+    myappid = 'kosmos.nozzlecalc.pro.v3.18'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
@@ -61,6 +61,8 @@ TRANSLATIONS = {
         "btn_run": "COMPUTE GEOMETRY (ENTER)",
         "btn_manual": "📘 Theory Manual",
         "btn_reset_view": "Refit View ⟲",
+        "btn_export": "Export CSV",
+        "btn_flow": "Flow Props 📊",
         "tab_plot": "2D Visualization",
         "tab_data": "Technical Data",
         
@@ -99,6 +101,15 @@ TRANSLATIONS = {
         "rpt_At": "Throat Area (At)",
         "rpt_Ae": "Exhaust Area (Ae)",
         
+        "flow_title": "Isentropic Flow Properties",
+        "flow_loc": "Location",
+        "flow_mach": "Mach Number",
+        "flow_p": "Pressure Ratio (P/Pc)",
+        "flow_t": "Temp. Ratio (T/Tc)",
+        "loc_chamber": "Chamber",
+        "loc_throat": "Throat",
+        "loc_exit": "Exit",
+        
         "snap_N": "N (Div. Start)",
         "snap_Q": "Q (Control Pt)",
         "snap_E": "E (Exhaust)",
@@ -111,7 +122,10 @@ TRANSLATIONS = {
         "msg_saved": "Project saved successfully!",
         "file_type": "Nozzle Project Files",
         "status_conv": "SIMULATION CONVERGED",
-        "status_div": "SIMULATION DIVERGED" # Typo corrigido
+        "status_div": "SIMULATION DIVERGED",
+
+        "msg_exported": "Success! Geometry exported successfully!\nReady for CAD import.", 
+        "file_type": "Nozzle Project Files"
     },
     "pt": {
         "sidebar_title": "Parâmetros de Entrada",
@@ -119,9 +133,11 @@ TRANSLATIONS = {
         "btn_open": "Abrir Projeto",
         "btn_save": "Salvar",
         "btn_save_as": "Salvar Como...",
-        "btn_run": "COMPUTAR GEOMETRIA (ENTER)",
+        "btn_run": "COMPUTAR GEOMETRY (ENTER)",
         "btn_manual": "📘 Manual Teórico",
         "btn_reset_view": "Resetar Vista ⟲",
+        "btn_export": "Exportar CSV",
+        "btn_flow": "Propriedades 📊",
         "tab_plot": "2D Visualization",
         "tab_data": "Dados Técnicos",
         
@@ -160,6 +176,15 @@ TRANSLATIONS = {
         "rpt_At": "Área Garganta (At)",
         "rpt_Ae": "Área Exaustão (Ae)",
         
+        "flow_title": "Propriedades Isentrópicas",
+        "flow_loc": "Localização",
+        "flow_mach": "Número de Mach",
+        "flow_p": "Razão Pressão (P/Pc)",
+        "flow_t": "Razão Temp. (T/Tc)",
+        "loc_chamber": "Câmara",
+        "loc_throat": "Garganta",
+        "loc_exit": "Saída",
+        
         "snap_N": "N (Início Div.)",
         "snap_Q": "Q (Ponto Controle)",
         "snap_E": "E (Exaustão)",
@@ -172,11 +197,16 @@ TRANSLATIONS = {
         "msg_saved": "Projeto salvo com sucesso!",
         "file_type": "Arquivos de Projeto Nozzle",
         "status_conv": "SIMULAÇÃO CONVERGIU",
-        "status_div": "SIMULAÇÃO DIVERGIU"
+        "status_div": "SIMULAÇÃO DIVERGIU",
+
+        "msg_exported": "Sucesso! Geometria exportada com sucesso!\nPronto para importação CAD.",
+        "file_type": "Arquivos de Projeto Nozzle"
     }
 }
 
 # --- 1. CAMADA DE MODELO ---
+@dataclass
+@dataclass
 @dataclass
 class NozzleResult:
     length: float
@@ -191,9 +221,13 @@ class NozzleResult:
     rounding_factor: float
     cone_ref_length: float
     divergent_angle_input: float
+    # --- CAMPOS DE PERFORMANCE (Que estavam faltando) ---
     lambda_eff: float
     cf_ideal: float
     cf_est: float
+    # --- CAMPOS DE EXPORTAÇÃO ---
+    contour_x: np.ndarray 
+    contour_y: np.ndarray
 
 class NozzleCalculator:
     _ARATIO = np.array([4, 5, 10, 20, 30, 40, 50, 100])
@@ -227,18 +261,14 @@ class NozzleCalculator:
 
     @classmethod
     def get_wall_angles(cls, eps: float, tr: float, percent: float, ang_div: float) -> Tuple[float, float, float]:
-        
         tn_60 = np.interp(eps, cls._ARATIO, cls._DATA_MAP[60]['tn'])
         te_60 = np.interp(eps, cls._ARATIO, cls._DATA_MAP[60]['te'])
-        
         tn_80 = np.interp(eps, cls._ARATIO, cls._DATA_MAP[80]['tn'])
         te_80 = np.interp(eps, cls._ARATIO, cls._DATA_MAP[80]['te'])
-        
         tn_90 = np.interp(eps, cls._ARATIO, cls._DATA_MAP[90]['tn'])
         te_90 = np.interp(eps, cls._ARATIO, cls._DATA_MAP[90]['te'])
 
         x_percents = [0.6, 0.8, 0.9] 
-        
         y_tn = [tn_60, tn_80, tn_90]
         y_te = [te_60, te_80, te_90]
 
@@ -246,39 +276,34 @@ class NozzleCalculator:
         final_theta_e = np.interp(percent, x_percents, y_te)
 
         f1 = ((math.sqrt(eps) - 1) * tr) / math.tan(math.radians(ang_div))
-        
         ln = percent * f1
         
         return ln, math.radians(final_theta_n), math.radians(final_theta_e)
 
+    def solve_mach_from_area(self, epsilon: float, k: float) -> float:
+        if epsilon <= 1.0: return 1.0
+        M = 2.0 
+        for _ in range(20):
+            term1 = (2 / (k + 1)) * (1 + (k - 1) / 2 * M**2)
+            exponent = (k + 1) / (2 * (k - 1))
+            f = (1 / M) * (term1 ** exponent) - epsilon
+            df = (1/M) * exponent * (term1**(exponent-1)) * (2/(k+1)) * (k-1)*M - (1/M**2) * (term1**exponent)
+            if abs(f) < 1e-6: return M
+            M = M - f / df
+        return M
+
     def calculate_performance(self, k: float, pc: float, pe: float, theta_e_deg: float, eps: float):
-        """Calcula Lambda e Cf."""
-        # 1. Eficiência de Divergência (Lambda)
         theta_rad = math.radians(theta_e_deg)
         lam = (1 + math.cos(theta_rad)) / 2
-
-        # 2. Cf Ideal (Isentrópico)
-        # Converter Pe (atm) para MPa para a razão de pressão ficar correta
         pe_mpa = pe / 9.86923 
         pratio = pe_mpa / pc
-
-        # Proteção matemática para evitar raiz de negativo se Pe > Pc (erro de input)
-        if pratio >= 1.0:
-            return lam, 0.0, 0.0
+        if pratio >= 1.0: return lam, 0.0, 0.0
 
         term1 = (2 * k**2) / (k - 1)
         term2 = (2 / (k + 1)) ** ((k + 1) / (k - 1))
         term3 = 1 - (pratio) ** ((k - 1) / k)
-        
         cf_ideal = math.sqrt(term1 * term2 * term3)
-        
-        # Adiciona termo de pressão (assumindo expansão ótima Pe=Pa para simplificar o Cf base)
-        # Se quiser adicionar o termo (Pe-Pa)/Pc * eps, precisaria pedir Pa ao usuário.
-        # Por padrão, Cf de foguete costuma ser reportado no vácuo ou ótimo.
-        
-        # 3. Cf Real Estimado (Lambda * 0.98 de perdas viscosas/atrito)
         cf_real = cf_ideal * lam * 0.98
-
         return lam, cf_ideal, cf_real
 
     def compute(self, tr: float, k: float, pc: float, pe: float, 
@@ -296,10 +321,9 @@ class NozzleCalculator:
         theta_n_deg = math.degrees(theta_n_rad)
         theta_e_deg = math.degrees(theta_e_rad)
         
-        # --- CÁLCULO DA PERFORMANCE ---
+        # Calcula Performance
         lam, cf_i, cf_r = self.calculate_performance(k, pc, pe, theta_e_deg, eps)
 
-        # ... (Cálculo de coordenadas nx, ny, etc continua igual) ...
         r_div_rel = 0.382 * rounding_factor 
         angle_rel = math.radians(theta_n_deg - 90)
         nx = r_div_rel * tr * math.cos(angle_rel)
@@ -316,7 +340,27 @@ class NozzleCalculator:
         else:
             qx = (c2 - c1) / (m1 - m2)
             qy = (m1 * c2 - m2 * c1) / (m1 - m2)
-            
+        
+        # Gera pontos completos para exportação e plot
+        t_param = np.linspace(0, 1, 100)
+        
+        # 1. Convergente
+        theta_conv = np.linspace(math.radians(ang_cov), math.radians(-90), 50)
+        x_conv = 1.5 * tr * np.cos(theta_conv)
+        y_conv = 1.5 * tr * np.sin(theta_conv) + 1.5 * tr + tr
+        
+        # 2. Garganta Divergente
+        theta_div_arc = np.linspace(math.radians(-90), math.radians(theta_n_deg - 90), 50)
+        x_div_arc = r_div_rel * tr * np.cos(theta_div_arc)
+        y_div_arc = r_div_rel * tr * np.sin(theta_div_arc) + r_div_rel * tr + tr
+        
+        # 3. Bell (Bézier)
+        bx = (1 - t_param)**2 * nx + 2 * (1 - t_param) * t_param * qx + t_param**2 * ex
+        by = (1 - t_param)**2 * ny + 2 * (1 - t_param) * t_param * qy + t_param**2 * ey
+        
+        final_x = np.concatenate([x_conv, x_div_arc, bx])
+        final_y = np.concatenate([y_conv, y_div_arc, by])
+
         return NozzleResult(
             length=bell_length,
             epsilon=eps,
@@ -330,17 +374,21 @@ class NozzleCalculator:
             rounding_factor=rounding_factor,
             cone_ref_length=cone_ref_length,
             divergent_angle_input=ang_div,
+            # Retorna tudo
             lambda_eff=lam,
             cf_ideal=cf_i,
-            cf_est=cf_r
+            cf_est=cf_r,
+            contour_x=final_x,
+            contour_y=final_y
         )
 
 # --- 2. CAMADA DE VIEW (INTERFACE GRÁFICA) ---
 class App(ctk.CTk):
-    CURRENT_VERSION = "3.3.18"
+    CURRENT_VERSION = "3.4.0" # Versão atualizada com novas features
     
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_URL = "https://github.com/joseroberto1540/NozzleCalc/releases/latest"
+    RELEASE_API_URL = "https://api.github.com/repos/joseroberto1540/NozzleCalc/releases/latest"
 
     def __init__(self):
         super().__init__()
@@ -355,7 +403,15 @@ class App(ctk.CTk):
         self.is_panning = False
         self.pan_start_point = None
         
-        self.after(250, self._setup_icon)
+        try:
+            self.iconbitmap(resource_path("icon3.ico"))
+        except:
+            pass
+        try:
+            self.app_icon_image = ImageTk.PhotoImage(file=resource_path("icon3.ico"))
+            self.wm_iconphoto(True, self.app_icon_image) 
+        except Exception:
+            pass
 
         self.title(f"NozzleCalc {self.CURRENT_VERSION}")
         self.geometry("1200x800")
@@ -377,18 +433,6 @@ class App(ctk.CTk):
         
         self.after(2000, self.check_for_updates)
 
-    def _setup_icon(self):
-        icon_path = resource_path("icon3.ico")
-        try:
-            self.iconbitmap(icon_path)
-        except Exception:
-            pass
-        try:
-            self.app_icon_image = ImageTk.PhotoImage(file=icon_path)
-            self.wm_iconphoto(True, self.app_icon_image)
-        except Exception:
-            pass
-
     def _create_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=300, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
@@ -400,7 +444,6 @@ class App(ctk.CTk):
         self.inputs = {}
         self._add_input("tr", "lbl_tr", "13.5")
         
-        # Dropdown Propelentes
         lbl_prop = ctk.CTkLabel(self.sidebar, text=TRANSLATIONS["en"]["lbl_prop"], anchor="w")
         lbl_prop.pack(fill="x", padx=20, pady=(5, 0))
         self.input_labels["lbl_prop"] = lbl_prop
@@ -411,9 +454,7 @@ class App(ctk.CTk):
         self.prop_menu.set("KNSB (Sorbitol)")
         self.prop_menu.pack(fill="x", padx=20, pady=(0, 5))
         
-        # Valor padrão KNSB (1.135)
         self._add_input("k", "lbl_k", "1.135")
-        
         self._add_input("pc", "lbl_pc", "5.0")
         self._add_input("pe", "lbl_pe", "1.5")
         self._add_input("ang_div", "lbl_ang_div", "15") 
@@ -421,15 +462,8 @@ class App(ctk.CTk):
         self._add_input("len_pct", "lbl_len_pct", "0.8")
         self._add_input("rounding", "lbl_rounding", "1.00")
         
-        # Aplica estilo inicial ao k (Bloqueado)
-        self.inputs['k'].configure(
-            state="disabled",
-            fg_color="#1A1A1A",
-            border_color="#333333",
-            text_color="gray"
-        )
+        self.inputs['k'].configure(state="disabled", fg_color="#1A1A1A", border_color="#333333", text_color="gray")
 
-        # Checkbox Cone
         self.chk_cone_var = ctk.IntVar(value=0)
         self.chk_cone = ctk.CTkCheckBox(self.sidebar, text=TRANSLATIONS["en"]["chk_cone"],
                                         variable=self.chk_cone_var,
@@ -497,6 +531,17 @@ class App(ctk.CTk):
         self.right_tools = ctk.CTkFrame(self.top_bar, fg_color="transparent")
         self.right_tools.pack(side="right", padx=10, pady=5)
         
+        # Novos Botões (Flow & Export)
+        self.btn_flow = ctk.CTkButton(self.right_tools, text=TRANSLATIONS["en"]["btn_flow"],
+                                      command=self.open_flow_properties, width=100, height=28, 
+                                      fg_color="#3498DB", hover_color="#2980B9")
+        self.btn_flow.pack(side="left", padx=5)
+
+        self.btn_export = ctk.CTkButton(self.right_tools, text=TRANSLATIONS["en"]["btn_export"],
+                                      command=self.export_csv, width=100, height=28, 
+                                      fg_color="#27AE60", hover_color="#2ECC71")
+        self.btn_export.pack(side="left", padx=5)
+        
         self.btn_reset_view = ctk.CTkButton(self.right_tools, text=TRANSLATIONS["en"]["btn_reset_view"],
                                             command=self.reset_view, width=100, height=28, fg_color="#E67E22", hover_color="#D35400")
         self.btn_reset_view.pack(side="left", padx=15)
@@ -529,6 +574,91 @@ class App(ctk.CTk):
 
         self.txt_output = ctk.CTkTextbox(self.tab_data, font=("Consolas", 14))
         self.txt_output.pack(fill="both", expand=True, padx=5, pady=5)
+
+    # --- FUNÇÕES DE LÓGICA (Flow / Export) ---
+    def open_flow_properties(self):
+        if not self.last_result: return
+        t = TRANSLATIONS[self.current_lang]
+        res = self.last_result
+        k = float(self.inputs['k'].get())
+        mach_exit = self.calculator.solve_mach_from_area(res.epsilon, k)
+        
+        def get_ratios(mach, k):
+            if mach == 0: return 1.0, 1.0
+            term = 1 + (k - 1) / 2 * mach**2
+            t_ratio = 1 / term
+            p_ratio = term ** (-k / (k - 1))
+            return p_ratio, t_ratio
+
+        p_thr, t_thr = get_ratios(1.0, k)
+        p_exit, t_exit = get_ratios(mach_exit, k)
+
+        win = ctk.CTkToplevel(self)
+        win.title(t["flow_title"])
+        win.geometry("500x200")
+        win.attributes('-topmost', True)
+
+        headers = [t["flow_loc"], t["flow_mach"], t["flow_p"], t["flow_t"]]
+        for i, h in enumerate(headers):
+            ctk.CTkLabel(win, text=h, font=("Arial", 12, "bold")).grid(row=0, column=i, padx=15, pady=10)
+
+        data_rows = [
+            (t["loc_chamber"], 0.0, 1.0000, 1.0000),
+            (t["loc_throat"], 1.0, p_thr, t_thr),
+            (t["loc_exit"], mach_exit, p_exit, t_exit)
+        ]
+        for r_idx, row in enumerate(data_rows):
+            for c_idx, val in enumerate(row):
+                txt = val if isinstance(val, str) else f"{val:.4f}"
+                ctk.CTkLabel(win, text=txt).grid(row=r_idx+1, column=c_idx, padx=15, pady=5)
+
+    def export_csv(self):
+        if not self.last_result: return
+        t = TRANSLATIONS[self.current_lang]
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv", 
+            filetypes=[("CSV File", "*.csv"), ("Text File", "*.txt")], 
+            title="Export Nozzle Coordinates"
+        )
+        
+        if file_path:
+            # Pergunta qual formato o usuário quer (Correção definitiva do problema 10x)
+            use_dot = messagebox.askyesno(
+                "Formato Decimal", 
+                "Deseja usar PONTO (.) como separador decimal?\n\n"
+                "Sim = Padrão Internacional/CAD (13.5)\n"
+                "Não = Padrão Brasileiro/Excel BR (13,5)"
+            )
+            
+            try:
+                res = self.last_result
+                with open(file_path, 'w') as f:
+                    # Define o separador de colunas baseado na escolha decimal
+                    # Se usa ponto decimal, separa colunas com virgula.
+                    # Se usa virgula decimal, separa colunas com ponto-e-vírgula.
+                    col_sep = "," if use_dot else ";"
+                    
+                    # Escreve Header
+                    f.write(f"X_mm{col_sep}Y_mm{col_sep}Z_mm\n")
+                    
+                    for x, y in zip(res.contour_x, res.contour_y):
+                        if use_dot:
+                            # Padrão Internacional (CAD/Python/Excel EN)
+                            f.write(f"{x:.6f}{col_sep}{y:.6f}{col_sep}0.000000\n")
+                        else:
+                            # Padrão Brasileiro (Excel PT-BR)
+                            x_str = f"{x:.6f}".replace('.', ',')
+                            y_str = f"{y:.6f}".replace('.', ',')
+                            f.write(f"{x_str}{col_sep}{y_str}{col_sep}0,000000\n")
+                        
+                tk.messagebox.showinfo("Success", "Geometry exported successfully!\nReady for CAD import.")
+                
+                if sys.platform == 'win32':
+                    os.startfile(file_path)
+                    
+            except Exception as e:
+                tk.messagebox.showerror("Erro", f"Falha ao exportar:\n{e}")
 
     def reset_view(self):
         if self.base_xlim and self.base_ylim:
@@ -655,6 +785,39 @@ class App(ctk.CTk):
             self.current_file_path = file_path
             self._write_to_file(file_path)
 
+    def export_csv(self):
+        """Exporta coordenadas corrigidas para CAD (Divide por 10 para compensar escala cm/mm)."""
+        if not self.last_result: return
+        t = TRANSLATIONS[self.current_lang]
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv", 
+            filetypes=[("CSV File", "*.csv"), ("Text File", "*.txt")], 
+            title="Export Nozzle Coordinates"
+        )
+        
+        if file_path:
+            try:
+                res = self.last_result
+                with open(file_path, 'w') as f:
+                    # Header simples
+                    f.write("X,Y,Z\n")
+                    
+                    for x, y in zip(res.contour_x, res.contour_y):
+                        # AQUI ESTÁ A CORREÇÃO DE ESCALA: (val / 10)
+                        # Ponto decimal e vírgula separando colunas (Padrão CAD Internacional)
+                        f.write(f"{x/10:.6f},{y/10:.6f},0.000000\n")
+                        
+                # Agora usa a chave que adicionamos no dicionário, resolvendo o erro do popup
+                tk.messagebox.showinfo("NozzleCalc", t["msg_exported"])
+                
+                # Abre o arquivo para conferência
+                if sys.platform == 'win32':
+                    os.startfile(file_path)
+                    
+            except Exception as e:
+                tk.messagebox.showerror("Erro", f"Falha ao exportar:\n{e}")
+
     def _write_to_file(self, path):
         t = TRANSLATIONS[self.current_lang]
         try:
@@ -675,6 +838,8 @@ class App(ctk.CTk):
         self.btn_save.configure(text=t["btn_save"])
         self.btn_save_as.configure(text=t["btn_save_as"])
         self.btn_reset_view.configure(text=t["btn_reset_view"])
+        self.btn_export.configure(text=t["btn_export"]) # Novo
+        self.btn_flow.configure(text=t["btn_flow"])     # Novo
         self.chk_cone.configure(text=t["chk_cone"])
         self.input_labels["lbl_prop"].configure(text=t["lbl_prop"])
         for key, lbl_widget in self.input_labels.items():
@@ -687,14 +852,12 @@ class App(ctk.CTk):
         if self.last_result: self._update_plot(self.last_result, self.last_input_ang_cov)
 
     def open_manual(self):
-        """Abre o Manual Teórico diretamente no navegador (GitHub)."""
-        # Substitua esta URL pela URL real da sua página ou arquivo Markdown
-        THEORY_URL = "https://github.com/joseroberto1540/NozzleCalc/wiki/User-Manual-and-Geometry-Theory/"
-        
+        # LINK DA WIKI/DOCUMENTAÇÃO
+        THEORY_URL = "https://github.com/joseroberto1540/NozzleCalc/wiki" 
         try:
             webbrowser.open(THEORY_URL)
         except Exception as e:
-            tk.messagebox.showerror("Erro", f"Não foi possível abrir o navegador:\n{e}")
+            tk.messagebox.showerror("Erro", f"Não foi possível abrir:\n{e}")
 
     def run_simulation(self):
         t = TRANSLATIONS[self.current_lang]
@@ -744,7 +907,7 @@ class App(ctk.CTk):
             f"{t['rpt_lambda']}:   {res.lambda_eff:.4f}\n"
             f"{t['rpt_cf_ideal']}: {res.cf_ideal:.4f}\n"
             f"{t['rpt_cf_real']}:  {res.cf_est:.4f}\n"
-            f"Total Efficiency:    {total_eff:.2f}%\n\n" # <--- LINHA NOVA
+            f"Total Efficiency:    {total_eff:.2f}%\n\n"
             
             f"{t['rpt_angles']}:\n"
             f"Theta N: {res.angles['theta_n']:.3f}°\n"
@@ -785,7 +948,6 @@ class App(ctk.CTk):
         self.ax.set_xlabel(t["axis_x"], color='white')
         self.ax.set_ylabel(t["axis_y"], color='white')
 
-        # --- STATUS DE CONVERGÊNCIA ---
         g_x, g_y = 0, tr
         cond1 = (nx >= g_x) and (ny >= g_y)
         cond2 = (ex >= qx) and (ey >= qy)
@@ -799,42 +961,24 @@ class App(ctk.CTk):
         is_converged = cond1 and cond2 and cond3 and cond4
         status_text = t["status_conv"] if is_converged else t["status_div"]
         status_color = "#2ECC71" if is_converged else "#E74C3C"
-        
-        # Caixa Centralizada (Convergiu/Divergiu)
-        self.ax.text(0.5, 1.12, status_text, 
-                     transform=self.ax.transAxes, ha='center', va='bottom',
+        self.ax.text(0.5, 1.12, status_text, transform=self.ax.transAxes, ha='center', va='bottom',
                      color='white', weight='bold', fontsize=10,
                      bbox=dict(boxstyle="round,pad=0.5", fc=status_color, ec="none", alpha=0.9))
 
-        # --- [NOVO] INDICADOR DE EFICIÊNCIA ---
-        if res.cf_ideal > 0:
-            eff_val = (res.cf_est / res.cf_ideal) * 100
-        else:
-            eff_val = 0.0
+        if res.cf_ideal > 0: eff_val = (res.cf_est / res.cf_ideal) * 100
+        else: eff_val = 0.0
+        
+        if eff_val > 96.0: eff_bg, eff_fg = "#2ECC71", "white"
+        elif eff_val >= 92.0: eff_bg, eff_fg = "#F1C40F", "black"
+        else: eff_bg, eff_fg = "#E74C3C", "white"
 
-        # Lógica de Cores (Semáforo)
-        if eff_val > 96.0:
-            eff_bg = "#2ECC71" # Verde
-            eff_fg = "white"
-        elif eff_val >= 92.0:
-            eff_bg = "#F1C40F" # Amarelo/Ouro
-            eff_fg = "black"   # Preto para contraste
-        else:
-            eff_bg = "#E74C3C" # Vermelho
-            eff_fg = "white"
-
-        # Caixa à Direita (Eficiência)
-        self.ax.text(0.85, 1.12, f"EFF: {eff_val:.2f}%", 
-                     transform=self.ax.transAxes, ha='center', va='bottom',
+        self.ax.text(0.85, 1.12, f"EFF: {eff_val:.2f}%", transform=self.ax.transAxes, ha='center', va='bottom',
                      color=eff_fg, weight='bold', fontsize=10,
                      bbox=dict(boxstyle="round,pad=0.5", fc=eff_bg, ec="none", alpha=0.9))
 
-        # --- PLOTAGEM GEOMETRIA ---
-        t_param = np.linspace(0, 1, 100)
-        bx = (1 - t_param)**2 * nx + 2 * (1 - t_param) * t_param * qx + t_param**2 * ex
-        by = (1 - t_param)**2 * ny + 2 * (1 - t_param) * t_param * qy + t_param**2 * ey
-        self.ax.plot(bx, by, color='#00BFFF', linewidth=2.5, label=t["legend_profile"])
-        self.ax.plot(bx, -by, color='#00BFFF', linewidth=2.5)
+        # Plot usando contour_x pré-calculado (mais rápido e seguro)
+        self.ax.plot(res.contour_x, res.contour_y, color='#00BFFF', linewidth=2.5, label=t["legend_profile"])
+        self.ax.plot(res.contour_x, -res.contour_y, color='#00BFFF', linewidth=2.5)
 
         theta_conv = np.linspace(np.radians(ang_cov), np.radians(-90), 50)
         xc_conv = 0 + (1.5 * tr) * np.cos(theta_conv)
@@ -903,48 +1047,26 @@ class App(ctk.CTk):
 
     def check_for_updates(self):
         try:
-            # Nova URL: API oficial do GitHub para pegar a última release
-            # Isso evita o erro 429 do raw.githubusercontent e problemas de cache
-            api_url = "https://api.github.com/repos/joseroberto1540/NozzleCalc/releases/latest"
-            
-            # print(f"Consultando API: {api_url}") # Debug
-            
+            api_url = self.RELEASE_API_URL
             response = requests.get(api_url, timeout=5)
-            
             if response.status_code == 200:
                 data = response.json()
-                # A tag geralmente vem como "v3.7.4", precisamos tirar o "v" se houver
                 latest_tag = data['tag_name'].replace('v', '').strip()
-                
-                # print(f"GitHub Tag: {latest_tag} | Local: {self.CURRENT_VERSION}") # Debug
-                
                 if version.parse(latest_tag) > version.parse(self.CURRENT_VERSION):
                     t = TRANSLATIONS[self.current_lang]
                     title = "Update Available" if self.current_lang == "en" else "Atualização Disponível"
-                    
                     msg = (f"New version {latest_tag} is available!\n"
                            f"Current version: {self.CURRENT_VERSION}\n\n"
                            f"Do you want to download it now?") if self.current_lang == "en" else \
                           (f"Nova versão {latest_tag} disponível!\n"
                            f"Sua versão: {self.CURRENT_VERSION}\n\n"
                            f"Deseja baixar agora?")
-
                     answer = messagebox.askyesno(title, msg)
                     if answer:
-                        # Pega a URL do navegador direto da API (mais seguro)
-                        download_page = data['html_url'] 
-                        webbrowser.open(download_page)
+                        webbrowser.open(data['html_url'])
                         self.on_closing()
-            elif response.status_code == 403 or response.status_code == 429:
-                # Limite de taxa atingido, falha silenciosa (não incomoda o usuário)
-                print("Limite de requisições do GitHub atingido. Tente mais tarde.")
-            else:
-                print(f"Erro na API GitHub: {response.status_code}")
-
-        except Exception as e:
-            print(f"Erro interno no update: {e}")
-            # messagebox.showerror("Erro Update", str(e)) # Descomente para debug
-        
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     app = App()
