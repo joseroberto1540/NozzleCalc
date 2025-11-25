@@ -292,7 +292,7 @@ class NozzleCalculator:
 
 # --- 2. CAMADA DE VIEW (INTERFACE GRÁFICA) ---
 class App(ctk.CTk):
-    CURRENT_VERSION = "3.3.10"
+    CURRENT_VERSION = "3.3.11"
     
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_URL = "https://github.com/joseroberto1540/NozzleCalc/releases/latest"
@@ -815,51 +815,47 @@ class App(ctk.CTk):
 
     def check_for_updates(self):
         try:
-            # 1. TÁTICA ANTI-CACHE (Cache Busting)
-            # Adicionamos um número aleatório no final da URL (?dummy=12345)
-            # Isso obriga o GitHub a não usar a versão velha salva na memória dele.
-            url_no_cache = f"{self.VERSION_URL}?dummy={random.randint(1, 100000)}"
+            # Nova URL: API oficial do GitHub para pegar a última release
+            # Isso evita o erro 429 do raw.githubusercontent e problemas de cache
+            api_url = "https://api.github.com/repos/joseroberto1540/NozzleCalc/releases/latest"
             
-            # print(f"Checando updates em: {url_no_cache}") # Para debug no terminal
+            # print(f"Consultando API: {api_url}") # Debug
             
-            # Timeout curto para não travar o app se a internet estiver ruim
-            response = requests.get(url_no_cache, timeout=5)
+            response = requests.get(api_url, timeout=5)
             
             if response.status_code == 200:
-                latest_version = response.text.strip()
+                data = response.json()
+                # A tag geralmente vem como "v3.7.4", precisamos tirar o "v" se houver
+                latest_tag = data['tag_name'].replace('v', '').strip()
                 
-                # print(f"Local: {self.CURRENT_VERSION} | Remota: {latest_version}") # Para debug
+                # print(f"GitHub Tag: {latest_tag} | Local: {self.CURRENT_VERSION}") # Debug
                 
-                # Compara as versões
-                if version.parse(latest_version) > version.parse(self.CURRENT_VERSION):
+                if version.parse(latest_tag) > version.parse(self.CURRENT_VERSION):
                     t = TRANSLATIONS[self.current_lang]
-                    
                     title = "Update Available" if self.current_lang == "en" else "Atualização Disponível"
                     
-                    msg = (f"New version {latest_version} is available!\n"
+                    msg = (f"New version {latest_tag} is available!\n"
                            f"Current version: {self.CURRENT_VERSION}\n\n"
                            f"Do you want to download it now?") if self.current_lang == "en" else \
-                          (f"Nova versão {latest_version} disponível!\n"
+                          (f"Nova versão {latest_tag} disponível!\n"
                            f"Sua versão: {self.CURRENT_VERSION}\n\n"
                            f"Deseja baixar agora?")
 
-                    # Mostra a janela de pergunta
-                    # IMPORTANTE: Usamos self.after para garantir que a janela principal já existe
-                    # antes de mostrar o popup, evitando travamentos.
                     answer = messagebox.askyesno(title, msg)
-                    
                     if answer:
-                        webbrowser.open(self.RELEASE_URL)
+                        # Pega a URL do navegador direto da API (mais seguro)
+                        download_page = data['html_url'] 
+                        webbrowser.open(download_page)
                         self.on_closing()
+            elif response.status_code == 403 or response.status_code == 429:
+                # Limite de taxa atingido, falha silenciosa (não incomoda o usuário)
+                print("Limite de requisições do GitHub atingido. Tente mais tarde.")
             else:
-                # Se o link estiver quebrado ou privado, imprime no console (se estiver rodando pelo VS Code)
-                print(f"Erro ao acessar GitHub: Status {response.status_code}")
+                print(f"Erro na API GitHub: {response.status_code}")
 
         except Exception as e:
-            # Se der erro de internet ou biblioteca, imprime no console
-            print(f"Erro no Update Check: {e}")
-            # Se quiser ver o erro na tela durante testes, descomente a linha abaixo:
-            # messagebox.showerror("Debug Update Error", str(e))
+            print(f"Erro interno no update: {e}")
+            # messagebox.showerror("Erro Update", str(e)) # Descomente para debug
         
 
 if __name__ == "__main__":
