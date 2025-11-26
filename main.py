@@ -74,7 +74,7 @@ TRANSLATIONS = {
         "lbl_ang_div": "Divergent Angle (deg)",
         "lbl_ang_cov": "Convergent Angle (deg)",
         "lbl_len_pct": "Length % (0.6-0.9)",
-        "lbl_rounding": "Throat Rounding Factor",
+        "lbl_rounding": "Throat Rounding Factor (TRF)",
         "chk_cone": "Show Conical Ref.",
         
         "plot_title": "Bell Nozzle Profile (ε={:.2f})",
@@ -125,7 +125,19 @@ TRANSLATIONS = {
         "status_div": "SIMULATION DIVERGED",
 
         "msg_exported": "Success! Geometry exported successfully!\nReady for CAD import.", 
-        "file_type": "Nozzle Project Files"
+        "file_type": "Nozzle Project Files",
+
+        "risk_label": "Throat Separation Risk", # NOVO
+        "risk_low": " LOW (Conservative) - The use of CFDs for analysis is recommended.",    # NOVO
+        "risk_med": " MEDIUM (Standard) - The use of CFDs for analysis is recommended.",     # NOVO
+        "risk_high": " HIGH (Aggressive) - The use of CFDs for analysis is recommended.",    # NOVO
+
+        "tab_sens": "Sensitivity Analysis", # NOVO
+        "sens_title": "Efficiency vs Nozzle Length", # NOVO
+        "axis_len_pct": "Length Percentage (%)", # NOVO
+        "axis_eff": "Total Efficiency (%)", # NOVO
+        "legend_curve": "Efficiency Curve", # NOVO
+        "legend_current": "Current Design", # NOVO
     },
     "pt": {
         "sidebar_title": "Parâmetros de Entrada",
@@ -149,7 +161,7 @@ TRANSLATIONS = {
         "lbl_ang_div": "Ângulo Divergente (graus)",
         "lbl_ang_cov": "Ângulo Convergente (graus)",
         "lbl_len_pct": "% Comprimento (0.6-0.9)",
-        "lbl_rounding": "Fator Arred. Garganta",
+        "lbl_rounding": "Fator Arred. Garganta (TRF)",
         "chk_cone": "Mostrar Cone Ref.",
         
         "plot_title": "Perfil Tubeira Bell (ε={:.2f})",
@@ -200,7 +212,19 @@ TRANSLATIONS = {
         "status_div": "SIMULAÇÃO DIVERGIU",
 
         "msg_exported": "Sucesso! Geometria exportada com sucesso!\nPronto para importação CAD.",
-        "file_type": "Arquivos de Projeto Nozzle"
+        "file_type": "Arquivos de Projeto Nozzle",
+
+        "risk_label": "Risco Descolamento (Garganta)", # NOVO
+        "risk_low": " BAIXO (Conservador) - Recomenda-se o uso de CFDs para análise.",          # NOVO
+        "risk_med": " MÉDIO (Padrão) - Recomenda-se o uso de CFDs para análise.",               # NOVO
+        "risk_high": " ALTO (Agressivo - Cuidado!) - Recomenda-se o uso de CFDs para análise.", # NOVO
+
+        "tab_sens": "Análise de Sensibilidade", # NOVO
+        "sens_title": "Eficiência x Comprimento", # NOVO
+        "axis_len_pct": "Porcentagem de Comprimento (%)", # NOVO
+        "axis_eff": "Eficiência Total (%)", # NOVO
+        "legend_curve": "Curva de Eficiência", # NOVO
+        "legend_current": "Design Atual", # NOVO
     }
 }
 
@@ -384,7 +408,7 @@ class NozzleCalculator:
 
 # --- 2. CAMADA DE VIEW (INTERFACE GRÁFICA) ---
 class App(ctk.CTk):
-    CURRENT_VERSION = "3.4.0" # Versão atualizada com novas features
+    CURRENT_VERSION = "3.4.1" # Versão atualizada com novas features
     
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_URL = "https://github.com/joseroberto1540/NozzleCalc/releases/latest"
@@ -430,6 +454,11 @@ class App(ctk.CTk):
         self.cursor_hline = None
         self.cursor_text = None
         self.snap_points = {}
+
+        self.sens_data = None
+        self.cursor_sens_v = None
+        self.cursor_sens_h = None
+        self.cursor_sens_text = None
         
         self.after(2000, self.check_for_updates)
 
@@ -460,7 +489,7 @@ class App(ctk.CTk):
         self._add_input("ang_div", "lbl_ang_div", "15") 
         self._add_input("ang_cov", "lbl_ang_cov", "-135")
         self._add_input("len_pct", "lbl_len_pct", "0.8")
-        self._add_input("rounding", "lbl_rounding", "1.00")
+        self._add_input("rounding", "lbl_rounding", "2.00")
         
         self.inputs['k'].configure(state="disabled", fg_color="#1A1A1A", border_color="#333333", text_color="gray")
 
@@ -559,6 +588,7 @@ class App(ctk.CTk):
         
         self.tab_plot = self.tabview.add(TRANSLATIONS["en"]["tab_plot"])
         self.tab_data = self.tabview.add(TRANSLATIONS["en"]["tab_data"])
+        self.tab_sens = self.tabview.add(TRANSLATIONS["en"]["tab_sens"])
         
         self.fig, self.ax = plt.subplots(figsize=(6, 5), dpi=100)
         self.fig.patch.set_facecolor('#2B2B2B') 
@@ -571,6 +601,13 @@ class App(ctk.CTk):
         self.canvas.mpl_connect('scroll_event', self.on_scroll)
         self.canvas.mpl_connect('button_press_event', self.on_press)
         self.canvas.mpl_connect('button_release_event', self.on_release)
+
+        self.fig_sens, self.ax_sens = plt.subplots(figsize=(6, 5), dpi=100)
+        self.fig_sens.patch.set_facecolor('#2B2B2B') 
+        self.ax_sens.set_facecolor('#2B2B2B')
+        self.canvas_sens = FigureCanvasTkAgg(self.fig_sens, master=self.tab_sens)
+        self.canvas_sens.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas_sens.mpl_connect('motion_notify_event', self.on_mouse_move_sens)
 
         self.txt_output = ctk.CTkTextbox(self.tab_data, font=("Consolas", 14))
         self.txt_output.pack(fill="both", expand=True, padx=5, pady=5)
@@ -877,6 +914,7 @@ class App(ctk.CTk):
             self.last_input_ang_cov = params['ang_cov']
             self._update_text_output(res)
             self._update_plot(res, params['ang_cov'])
+            self._update_sensitivity_analysis(params)
         except ValueError as e:
             self.txt_output.delete("1.0", "end")
             self.txt_output.insert("end", f"{t['err_calc']}:\n{str(e)}")
@@ -893,6 +931,31 @@ class App(ctk.CTk):
         else:
             total_eff = 0.0
 
+        # --- LÓGICA DE RISCO DE DESCOLAMENTO (AVANÇADA) ---
+        # O risco depende do quão fechada é a curva (Theta N) 
+        # E do quão "apertado" é o raio (Rounding Factor).
+        # Raio pequeno + Angulo grande = Descolamento certo.
+        
+        theta_n = res.angles['theta_n']
+        rf = res.rounding_factor
+        
+        # Evita divisão por zero ou fatores absurdos
+        safe_rf = max(rf, 0.1) 
+        
+        # Índice de Severidade da Curva
+        # Se RF = 1.0, a severidade é o próprio ângulo.
+        # Se RF < 1.0 (Raio apertado), a severidade aumenta exponencialmente.
+        severity_index = theta_n / safe_rf
+        
+        # Critérios ajustados para incluir o raio na conta
+        if severity_index < 13.80:
+            risk_msg = t["risk_low"]
+            risk_color = "green" # Apenas referência lógica, o texto já diz
+        elif severity_index <= 26:
+            risk_msg = t["risk_med"]
+        else:
+            risk_msg = t["risk_high"]
+
         report = (
             f"{t['rpt_header']}\n\n"
             f"{t['rpt_geo']}:\n"
@@ -907,7 +970,8 @@ class App(ctk.CTk):
             f"{t['rpt_lambda']}:   {res.lambda_eff:.4f}\n"
             f"{t['rpt_cf_ideal']}: {res.cf_ideal:.4f}\n"
             f"{t['rpt_cf_real']}:  {res.cf_est:.4f}\n"
-            f"Total Efficiency:    {total_eff:.2f}%\n\n"
+            f"Total Efficiency:    {total_eff:.2f}%\n"
+            f"{t['risk_label']}: {risk_msg}\n\n"
             
             f"{t['rpt_angles']}:\n"
             f"Theta N: {res.angles['theta_n']:.3f}°\n"
@@ -919,14 +983,115 @@ class App(ctk.CTk):
         )
         self.txt_output.insert("end", report)
 
+    def _update_sensitivity_analysis(self, current_params):
+        """Roda varredura de 60% a 100% e plota eficiência vs comprimento."""
+        t = TRANSLATIONS[self.current_lang]
+        
+        # 1. Limpeza Total
+        self.ax_sens.clear()
+        
+        # 2. Configuração Visual (Resetando aspecto para AUTO para preencher a tela)
+        self.ax_sens.set_aspect('auto') 
+        self.ax_sens.grid(True, linestyle='--', alpha=0.3, color='white')
+        for spine in self.ax_sens.spines.values(): spine.set_color('white')
+        self.ax_sens.tick_params(colors='white')
+        self.ax_sens.set_title(t["sens_title"], color='white', fontsize=12, weight='bold')
+        self.ax_sens.set_xlabel(t["axis_len_pct"], color='white')
+        self.ax_sens.set_ylabel(t["axis_eff"], color='white')
+
+        x_vals = []
+        y_vals = []
+        
+        # Loop de Varredura (60% a 100%)
+        test_percents = np.linspace(0.60, 1.00, 41) 
+        
+        for pct in test_percents:
+            sim_params = current_params.copy()
+            sim_params['length_pct'] = pct
+            
+            res = self.calculator.compute(**sim_params)
+            
+            # Verificação de Convergência simplificada para o gráfico
+            tr = res.throat_radius
+            nx, ny = res.control_points['N']
+            qx, qy = res.control_points['Q']
+            ex, ey = res.control_points['E']
+            
+            g_x, g_y = 0, tr
+            cond1 = (nx >= g_x) and (ny >= g_y)
+            cond2 = (ex >= qx) and (ey >= qy)
+            cond3 = (qy >= ny)
+            if (ex - nx) != 0:
+                slope_ne = (ey - ny) / (ex - nx)
+                y_ref_at_q = ny + slope_ne * (qx - nx)
+                cond4 = qy >= y_ref_at_q
+            else:
+                cond4 = False
+            
+            is_converged = cond1 and cond2 and cond3 and cond4
+            
+            if is_converged and res.cf_ideal > 0:
+                eff = (res.cf_est / res.cf_ideal) * 100
+                x_vals.append(pct * 100) 
+                y_vals.append(eff)
+        
+        # Salva dados para o cursor
+        self.sens_data = (np.array(x_vals), np.array(y_vals))
+
+        # Plot da Curva
+        if x_vals:
+            # Plota a linha
+            self.ax_sens.plot(x_vals, y_vals, color='#2ECC71', linewidth=2, label=t["legend_curve"])
+            
+            # Ponto Atual
+            current_pct = current_params['length_pct'] * 100
+            if self.last_result and self.last_result.cf_ideal > 0:
+                curr_eff = (self.last_result.cf_est / self.last_result.cf_ideal) * 100
+                
+                # Plota o ponto
+                self.ax_sens.scatter([current_pct], [curr_eff], color='#E74C3C', s=100, zorder=5, label=t["legend_current"])
+                
+                # Anotação
+                self.ax_sens.annotate(f"L: {current_pct:.1f}%\nEff: {curr_eff:.2f}%", 
+                                      (current_pct, curr_eff),
+                                      textcoords="offset points", xytext=(0,10), ha='center',
+                                      color='white', fontweight='bold', fontsize=9,
+                                      bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="none", alpha=0.7))
+
+            # --- CORREÇÃO DE ESCALA (ZOOM AUTOMÁTICO) ---
+            # X: Foca entre 55% e 105% para mostrar bem a curva de 60-100
+            self.ax_sens.set_xlim(55, 105)
+            
+            # Y: Foca entre o Mínimo da curva (menos um respiro) e 100.5%
+            min_y = min(y_vals)
+            self.ax_sens.set_ylim(min_y - 1.0, 100.5)
+
+        # Legenda (Chamada uma única vez no final)
+        self.ax_sens.legend(loc='lower right', facecolor='#333333', labelcolor='white')
+        
+        # Cursor (Inicializa invisível)
+        self.cursor_sens_v = self.ax_sens.axvline(x=0, visible=False, color='white', linestyle='--', alpha=0.5)
+        self.cursor_sens_h = self.ax_sens.axhline(y=0, visible=False, color='white', linestyle='--', alpha=0.5)
+        self.cursor_sens_text = self.ax_sens.text(0, 0, "", visible=False, color="#FFFF00", fontweight="bold",
+                                                  bbox=dict(boxstyle="round", fc="black", alpha=0.8))
+
+        self.canvas_sens.draw()
+
     def _update_plot(self, res: NozzleResult, ang_cov: float):
         t = TRANSLATIONS[self.current_lang]
+        
+        # Salva zoom
         prev_xlim = self.ax.get_xlim()
         prev_ylim = self.ax.get_ylim()
         is_subsequent_run = self.base_xlim is not None
 
         self.ax.clear()
         
+        # --- AJUSTE DE MARGEM (IMPORTANTE) ---
+        # Empurramos o gráfico para baixo (top=0.80) para abrir espaço
+        # para as 3 caixas de texto empilhadas lá em cima.
+        self.fig.subplots_adjust(top=0.80, bottom=0.10, left=0.10, right=0.95)
+
         tr = res.throat_radius
         nx, ny = res.control_points['N']
         qx, qy = res.control_points['Q']
@@ -944,10 +1109,13 @@ class App(ctk.CTk):
         self.ax.grid(True, linestyle='--', alpha=0.3, color='white')
         for spine in self.ax.spines.values(): spine.set_color('white')
         self.ax.tick_params(colors='white')
+        
+        # Título do Gráfico (Fica logo acima do eixo)
         self.ax.set_title(t["plot_title"].format(res.epsilon), color='white', fontsize=12, weight='bold')
         self.ax.set_xlabel(t["axis_x"], color='white')
         self.ax.set_ylabel(t["axis_y"], color='white')
 
+        # --- CÁLCULOS DE STATUS ---
         g_x, g_y = 0, tr
         cond1 = (nx >= g_x) and (ny >= g_y)
         cond2 = (ex >= qx) and (ey >= qy)
@@ -959,26 +1127,59 @@ class App(ctk.CTk):
         else: cond4 = False
 
         is_converged = cond1 and cond2 and cond3 and cond4
-        status_text = t["status_conv"] if is_converged else t["status_div"]
-        status_color = "#2ECC71" if is_converged else "#E74C3C"
-        self.ax.text(0.5, 1.12, status_text, transform=self.ax.transAxes, ha='center', va='bottom',
-                     color='white', weight='bold', fontsize=10,
-                     bbox=dict(boxstyle="round,pad=0.5", fc=status_color, ec="none", alpha=0.9))
-
+        
+        # --- CÁLCULO DE EFICIÊNCIA ---
         if res.cf_ideal > 0: eff_val = (res.cf_est / res.cf_ideal) * 100
         else: eff_val = 0.0
         
+        # --- CÁLCULO DE RISCO ---
+        rf = res.rounding_factor
+        safe_rf = max(rf, 0.1)
+        severity = theta_n_deg / safe_rf
+
+        # --- PLOTAGEM DOS TEXTOS (EMPILHADOS E CENTRALIZADOS) ---
+        
+        # 1. CAIXA DE STATUS (Topo da Pilha - y=1.26)
+        status_text = t["status_conv"] if is_converged else t["status_div"]
+        status_color = "#2ECC71" if is_converged else "#E74C3C"
+        
+        self.ax.text(0.5, 1.24, status_text, 
+                     transform=self.ax.transAxes, ha='center', va='bottom',
+                     color='white', weight='bold', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.4", fc=status_color, ec="none", alpha=0.9))
+
+        # 2. CAIXA DE RISCO (Meio da Pilha - y=1.17)
+        if severity < 13.80:
+            risk_txt = "THROAT FLOW DISPLACEMENT RISK: LOW"
+            risk_bg, risk_fg = "#2ECC71", "white"
+        elif severity <= 25:
+            risk_txt = "THROAT FLOW DISPLACEMENT RISK: MEDIUM (increase TRF)"
+            risk_bg, risk_fg = "#F1C40F", "black"
+        else:
+            risk_txt = "THROAT FLOW DISPLACEMENT RISK: HIGH (increase TRF)"
+            risk_bg, risk_fg = "#E74C3C", "white"
+            
+        self.ax.text(0.5, 1.18, risk_txt, 
+                     transform=self.ax.transAxes, ha='center', va='bottom',
+                     color=risk_fg, weight='bold', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.4", fc=risk_bg, ec="none", alpha=0.9))
+
+        # 3. CAIXA DE EFICIÊNCIA (Base da Pilha - y=1.08)
         if eff_val > 96.0: eff_bg, eff_fg = "#2ECC71", "white"
         elif eff_val >= 92.0: eff_bg, eff_fg = "#F1C40F", "black"
         else: eff_bg, eff_fg = "#E74C3C", "white"
 
-        self.ax.text(0.85, 1.12, f"EFF: {eff_val:.2f}%", transform=self.ax.transAxes, ha='center', va='bottom',
+        self.ax.text(0.5, 1.12, f"EFFICIENCY: {eff_val:.2f}%", 
+                     transform=self.ax.transAxes, ha='center', va='bottom',
                      color=eff_fg, weight='bold', fontsize=10,
-                     bbox=dict(boxstyle="round,pad=0.5", fc=eff_bg, ec="none", alpha=0.9))
+                     bbox=dict(boxstyle="round,pad=0.4", fc=eff_bg, ec="none", alpha=0.9))
 
-        # Plot usando contour_x pré-calculado (mais rápido e seguro)
-        self.ax.plot(res.contour_x, res.contour_y, color='#00BFFF', linewidth=2.5, label=t["legend_profile"])
-        self.ax.plot(res.contour_x, -res.contour_y, color='#00BFFF', linewidth=2.5)
+        # --- CURVAS E GEOMETRIA ---
+        t_param = np.linspace(0, 1, 100)
+        bx = (1 - t_param)**2 * nx + 2 * (1 - t_param) * t_param * qx + t_param**2 * ex
+        by = (1 - t_param)**2 * ny + 2 * (1 - t_param) * t_param * qy + t_param**2 * ey
+        self.ax.plot(bx, by, color='#00BFFF', linewidth=2.5, label=t["legend_profile"])
+        self.ax.plot(bx, -by, color='#00BFFF', linewidth=2.5)
 
         theta_conv = np.linspace(np.radians(ang_cov), np.radians(-90), 50)
         xc_conv = 0 + (1.5 * tr) * np.cos(theta_conv)
@@ -1038,6 +1239,42 @@ class App(ctk.CTk):
             self.ax.set_xlim(prev_xlim)
             self.ax.set_ylim(prev_ylim)
             self.canvas.draw()
+
+    def on_mouse_move_sens(self, event):
+        """Cursor magnético para a aba de Sensibilidade."""
+        # Verifica se o mouse está dentro do gráfico de sensibilidade
+        if not event.inaxes == self.ax_sens or self.sens_data is None:
+            if self.cursor_sens_v and self.cursor_sens_v.get_visible():
+                self.cursor_sens_v.set_visible(False)
+                self.cursor_sens_h.set_visible(False)
+                self.cursor_sens_text.set_visible(False)
+                self.canvas_sens.draw()
+            return
+
+        x_mouse = event.xdata
+        x_arr, y_arr = self.sens_data
+
+        if len(x_arr) == 0: return
+
+        # Encontra o índice do ponto mais próximo no eixo X (Snapping)
+        idx = (np.abs(x_arr - x_mouse)).argmin()
+        target_x = x_arr[idx]
+        target_y = y_arr[idx]
+
+        # Atualiza posições
+        self.cursor_sens_v.set_xdata([target_x])
+        self.cursor_sens_h.set_ydata([target_y])
+        
+        # Atualiza texto (L: Length, E: Efficiency)
+        self.cursor_sens_text.set_text(f"L: {target_x:.1f}%\nEff: {target_y:.2f}%")
+        self.cursor_sens_text.set_position((target_x, target_y))
+        
+        # Torna visível
+        self.cursor_sens_v.set_visible(True)
+        self.cursor_sens_h.set_visible(True)
+        self.cursor_sens_text.set_visible(True)
+
+        self.canvas_sens.draw()
 
     def on_closing(self):
         plt.close('all')
