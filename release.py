@@ -14,49 +14,60 @@ def release_new_version():
 
     tag_name = f"v{new_version}"
 
-    print(f"\n1. Atualizando main.py para {new_version}...")
+    # --- CAMINHO ATUALIZADO PARA A NOVA ARQUITETURA ---
+    target_file = os.path.join("src", "config.py")
+    
+    print(f"\n1. Atualizando {target_file} para {new_version}...")
     
     try:
-        with open("main.py", "r", encoding="utf-8") as f:
+        with open(target_file, "r", encoding="utf-8") as f:
             content = f.read()
         
-        # Atualiza a variável de versão no código
+        # MELHORIA: Regex mais flexível com espaços (\s*)
+        # Encontra: CURRENT_VERSION = "..." (com qualquer espaçamento no igual)
         new_content = re.sub(
-            r'CURRENT_VERSION = ".*?"', 
+            r'CURRENT_VERSION\s*=\s*".*?"', 
             f'CURRENT_VERSION = "{new_version}"', 
             content
         )
         
-        with open("main.py", "w", encoding="utf-8") as f:
+        # Verifica se houve mudança (segurança para saber se o regex funcionou)
+        if content == new_content:
+            print("⚠️ AVISO: A versão não parece ter sido alterada no arquivo. Verifique o formato em src/config.py.")
+        
+        with open(target_file, "w", encoding="utf-8") as f:
             f.write(new_content)
             
     except FileNotFoundError:
-        print("ERRO: main.py não encontrado!")
+        print(f"ERRO CRÍTICO: O arquivo {target_file} não foi encontrado!")
+        print("Verifique se a pasta 'src' existe e se o 'config.py' está dentro dela.")
         return
 
     print("\n2. Executando comandos Git...")
     
-    # AQUI ESTÁ A MUDANÇA: "git add ." pega TODOS os arquivos da pasta
     commands = [
-        "git add .",  # <--- MUDANÇA CRUCIAL: Adiciona ícone, manual, requirements, tudo!
-        f'git commit -m "Release {tag_name} - Full Update"',
-        "git push origin main --force", # Força a atualização do código
+        "git add .",  # Adiciona as novas pastas (core, ui, solvers)
+        f'git commit -m "Release {tag_name} - Refactor & Update"',
+        "git push origin main --force", # CUIDADO: Force push reescreve histórico
         f"git tag {tag_name}",
-        f"git push origin {tag_name}"   # Dispara o Robô
+        f"git push origin {tag_name}"   # Dispara o GitHub Actions
     ]
 
     for cmd in commands:
         print(f"> {cmd}")
         result = os.system(cmd)
         
-        # Se der erro no commit (ex: nada para commitar), avisamos mas tentamos continuar
-        # Se der erro no push, paramos.
-        if result != 0 and "commit" not in cmd:
-            print(f"⚠️ ALERTA ou ERRO ao executar: {cmd}")
-            # Não paramos o script no commit vazio, mas paramos se falhar o push
+        # Lógica de erro
+        if result != 0:
+            if "commit" in cmd:
+                print("⚠️ Aviso: Nada para commitar (talvez apenas a tag mudou?). Continuando...")
+            else:
+                print(f"❌ ERRO ao executar: {cmd}")
+                print("Interrompendo script para evitar inconsistências.")
+                return
 
     print(f"\n✅ SUCESSO! A versão {tag_name} foi enviada.")
-    print("O GitHub Actions vai baixar seus novos ícones/manual e gerar o executável.")
+    print("Monitore o GitHub Actions para ver o build do executável.")
 
 if __name__ == "__main__":
     release_new_version()
