@@ -24,20 +24,36 @@ from mpl_toolkits.mplot3d import Axes3D
 
 # IMPORTAÇÕES LOCAIS
 from src.config import CURRENT_VERSION, PROPELLANTS, resource_path
-from src.core.solvers.bell_nozzle import BellNozzleSolver # Renomeei para ficar mais explícito
+from src.core.solvers.bell_nozzle import BellNozzleSolver
+from src.core.solvers.bell_nozzle import BellNozzleSolver
+from src.core.solvers.moc_solver import MOCSolver
+
 from src.core.models import NozzleResult
 
 class App(ctk.CTk):
     VERSION_URL = "https://raw.githubusercontent.com/joseroberto1540/NozzleCalc/main/version.txt"
     RELEASE_API_URL = "https://api.github.com/repos/joseroberto1540/NozzleCalc/releases/latest"
 
+    COLOR_DISABLED_FG = "#1A1A1A"
+    COLOR_DISABLED_BORDER = "#333333"
+    COLOR_DISABLED_TEXT = "gray"
+    
+    COLOR_NORMAL_FG = "#343638"
+    COLOR_NORMAL_BORDER = "#565B5E"
+    COLOR_NORMAL_TEXT = "white"
+
     def __init__(self):
         super().__init__()
-        # Use a variável importada do config
-        self.title(f"NozzleCalc {CURRENT_VERSION}") 
         
-        # Instancia o solver importado
-        self.calculator = BellNozzleSolver()
+        # Mapeia nome -> CLASSE (não instancie aqui com ())
+        self.available_solvers = {
+            "Adapted Rao Method Solver (Rao)": BellNozzleSolver,
+            # "Method of Characteristics Solver (MOC)": MOCSolver
+        }
+        
+        self.current_solver_name = "Adapted Rao Method Solver (Rao)"
+        # Instancia o padrão
+        self.calculator = self.available_solvers[self.current_solver_name]()
         self.last_result = None
         self.last_input_ang_cov = -135
         self.current_file_path = None
@@ -82,14 +98,84 @@ class App(ctk.CTk):
         
         self.after(2000, self.check_for_updates)
 
+    def _set_input_state(self, key: str, state: str):
+        """Altera visualmente o estado de um input (normal vs disabled)."""
+        if key not in self.inputs: return
+        
+        entry = self.inputs[key]
+        entry.configure(state=state)
+        
+        if state == "disabled":
+            entry.configure(fg_color=self.COLOR_DISABLED_FG, 
+                            border_color=self.COLOR_DISABLED_BORDER, 
+                            text_color=self.COLOR_DISABLED_TEXT)
+        else:
+            entry.configure(fg_color=self.COLOR_NORMAL_FG, 
+                            border_color=self.COLOR_NORMAL_BORDER, 
+                            text_color=self.COLOR_NORMAL_TEXT)
+
+    def _setup_sensitivity_plot(self):
+        """
+        Cria (ou recria) o widget FigureCanvasTkAgg dentro da aba de sensibilidade.
+        Isso é necessário porque quando deletamos a aba, o canvas antigo morre.
+        """
+        # Verifica se a aba existe
+        try:
+            # Obtém a referência ATUAL do frame da aba (pode ter mudado após delete/insert)
+            tab_frame = self.tabview.tab("Sensitivity Analysis")
+        except Exception:
+            return # Aba não existe, não faz nada
+
+        # 1. Limpeza: Remove widgets antigos se houver (para não empilhar gráficos)
+        for widget in tab_frame.winfo_children():
+            widget.destroy()
+
+        # 2. Recriação: Cria um NOVO Canvas Tkinter, mas usa a FIGURA MATPLOTLIB EXISTENTE
+        # Nota: self.fig_sens é persistente (criado no __init__), então o gráfico antigo reaparece
+        self.canvas_sens = FigureCanvasTkAgg(self.fig_sens, master=tab_frame)
+        self.canvas_sens.draw() # Força o desenho imediato
+        
+        # 3. Empacotamento
+        self.canvas_sens.get_tk_widget().pack(fill="both", expand=True)
+        
+        # 4. Reconecta eventos (o canvas antigo levou os eventos com ele)
+        self.canvas_sens.mpl_connect('motion_notify_event', self.on_mouse_move_sens)
+
     def _create_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=300, corner_radius=0)
+        # MUDANÇA 1: De CTkFrame para CTkScrollableFrame
+        # Isso cria uma barra de rolagem automática se os itens não couberem
+        self.sidebar = ctk.CTkScrollableFrame(self, width=300, corner_radius=0)
+        
+        # MUDANÇA 2: Ajuste de cor para manter o visual 'flat' (opcional, mas recomendado)
+        # O ScrollableFrame as vezes tem um fundo diferente, isso garante que pareça a sidebar antiga
+        self.sidebar.configure(fg_color="transparent") 
+        
         self.sidebar.grid(row=0, column=0, sticky="nsew")
+        
+        # O resto do código permanece praticamente IDÊNTICO, 
+        # pois o .pack() funciona igual dentro do ScrollableFrame
         
         self.lbl_title = ctk.CTkLabel(self.sidebar, text="Input Parameters", 
                                       font=ctk.CTkFont(size=20, weight="bold"))
-        self.lbl_title.pack(pady=(30, 10), padx=10)
+        self.lbl_title.pack(pady=(20, 10), padx=10)
         
+        # --- SELEÇÃO DE SOLVER ---
+        lbl_solver = ctk.CTkLabel(self.sidebar, text="Solver Algorithm", anchor="w")
+        lbl_solver.pack(fill="x", padx=20, pady=(5, 0))
+
+        self.solver_menu = ctk.CTkOptionMenu(
+            self.sidebar, 
+            values=list(self.available_solvers.keys()),
+            command=self.change_solver
+        )
+        self.solver_menu.set(self.current_solver_name)
+        self.solver_menu.pack(fill="x", padx=20, pady=(0, 10))
+        
+        # Separador visual
+        ctk.CTkFrame(self.sidebar, height=2, fg_color="gray30").pack(fill="x", padx=20, pady=5)
+        
+        # --- INPUTS ---
+        # Note que reduzi levemente os pady de 3 para 2 para ganhar espaço visual
         self._add_input("tr", "Throat Radius (mm)", "13.5")
         
         lbl_prop = ctk.CTkLabel(self.sidebar, text="Propellant Preset", anchor="w")
@@ -106,7 +192,7 @@ class App(ctk.CTk):
         self._add_input("pe", "Exhaust Pressure (atm)", "1.5")
         self._add_input("ang_div", "Divergent Angle (deg)", "15") 
         self._add_input("ang_cov", "Convergent Angle (deg)", "-135")
-        self._add_input("len_pct", "Length % (0.6-0.9)", "0.8")
+        self._add_input("len_pct", "Equivalent Lenght (0.6-0.9)", "0.8")
         self._add_input("rounding", "Throat Rounding Factor (TRF)", "2.00")
         
         self.inputs['k'].configure(state="disabled", fg_color="#1A1A1A", border_color="#333333", text_color="gray")
@@ -117,17 +203,59 @@ class App(ctk.CTk):
                                         command=self.refresh_plot_only)
         self.chk_cone.pack(pady=(15, 0), padx=20, anchor="w")
         
+        # --- BOTÕES DE AÇÃO ---
+        # Dica de UX: Adicionei um espaço maior antes do botão de Run para separá-lo dos inputs
         self.btn_run = ctk.CTkButton(self.sidebar, text="COMPUTE GEOMETRY (ENTER)", 
                                      command=self.run_simulation,
                                      fg_color="#2ECC71", hover_color="#27AE60",
                                      height=40, font=ctk.CTkFont(weight="bold"))
-        self.btn_run.pack(pady=(20, 10), padx=20, fill="x")
+        self.btn_run.pack(pady=(30, 10), padx=20, fill="x") # Aumentei o pady superior
 
         self.btn_manual = ctk.CTkButton(self.sidebar, text="📘 Theory Manual",
                                         command=self.open_manual,
                                         fg_color="#34495E", hover_color="#2C3E50",
                                         height=28, font=ctk.CTkFont(size=12))
         self.btn_manual.pack(pady=(0, 20), padx=20, fill="x")
+
+    def change_solver(self, choice: str):
+        """Troca o solver e ajusta a interface (ativa/desativa inputs)."""
+        print(f"--- TROCANDO SOLVER PARA: {choice} ---")
+        
+        solver_class = self.available_solvers.get(choice)
+        
+        if solver_class:
+            try:
+                self.calculator = solver_class()
+                self.current_solver_name = choice
+                
+                # --- LÓGICA DE UI DINÂMICA ---
+                is_moc = "Characteristics" in choice
+                
+                if is_moc:
+                    # 1. Desativar inputs inúteis para MOC
+                    self._set_input_state("ang_div", "disabled")
+                    self._set_input_state("len_pct", "disabled")
+                    
+                    # 2. Remover aba de Sensibilidade (não faz sentido no MOC pois L é fixo)
+                    if "Sensitivity Analysis" in self.tabview._name_list:
+                        self.tabview.delete("Sensitivity Analysis")
+                        
+                else: # Bell Nozzle
+                    # 1. Reativar inputs
+                    self._set_input_state("ang_div", "normal")
+                    self._set_input_state("len_pct", "normal")
+                    
+                    # 2. Restaurar aba se sumiu
+                    if "Sensitivity Analysis" not in self.tabview._name_list:
+                        self.tabview.insert(2, "Sensitivity Analysis") 
+                        self._setup_sensitivity_plot()
+
+                # Feedback visual
+                print(f"UI Atualizada para modo: {'MOC' if is_moc else 'Bell'}")
+                
+            except Exception as e:
+                print(f"ERRO AO INSTANCIAR SOLVER: {e}")
+                tk.messagebox.showerror("Error", f"Could not load solver:\n{e}")
 
     def _add_input(self, key: str, label_text: str, default: str):
         frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
@@ -154,6 +282,7 @@ class App(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=0, pady=0)
         
+        # --- TOP BAR (Botões Open, Save, etc) ---
         self.top_bar = ctk.CTkFrame(self.main_frame, height=50, corner_radius=0, fg_color=("gray90", "gray20"))
         self.top_bar.pack(side="top", fill="x", padx=0, pady=0)
         
@@ -189,6 +318,7 @@ class App(ctk.CTk):
                                             command=self.reset_view, width=100, height=28, fg_color="#E67E22", hover_color="#D35400")
         self.btn_reset_view.pack(side="left", padx=15)
         
+        # --- ABAS ---
         self.tabview = ctk.CTkTabview(self.main_frame)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
         
@@ -197,7 +327,7 @@ class App(ctk.CTk):
         self.tab_sens = self.tabview.add("Sensitivity Analysis")
         self.tab_3d = self.tabview.add("3D View")
         
-        # 2D Plot
+        # --- PLOT 2D ---
         self.fig, self.ax = plt.subplots(figsize=(6, 5), dpi=100)
         self.fig.patch.set_facecolor('#2B2B2B') 
         self.ax.set_facecolor('#2B2B2B')
@@ -210,7 +340,7 @@ class App(ctk.CTk):
         self.canvas.mpl_connect('button_press_event', self.on_press)
         self.canvas.mpl_connect('button_release_event', self.on_release)
 
-        # 3D Plot
+        # --- PLOT 3D ---
         self.fig_3d = plt.figure(figsize=(6, 5), dpi=100)
         self.fig_3d.patch.set_facecolor('#2B2B2B')
         self.ax_3d = self.fig_3d.add_subplot(111, projection='3d')
@@ -219,13 +349,18 @@ class App(ctk.CTk):
         self.canvas_3d = FigureCanvasTkAgg(self.fig_3d, master=self.tab_3d)
         self.canvas_3d.get_tk_widget().pack(fill="both", expand=True)
 
-        # Sensitivity Plot
+        # --- SENSIBILIDADE ---
         self.fig_sens, self.ax_sens = plt.subplots(figsize=(6, 5), dpi=100)
         self.fig_sens.patch.set_facecolor('#2B2B2B') 
         self.ax_sens.set_facecolor('#2B2B2B')
-        self.canvas_sens = FigureCanvasTkAgg(self.fig_sens, master=self.tab_sens)
-        self.canvas_sens.get_tk_widget().pack(fill="both", expand=True)
-        self.canvas_sens.mpl_connect('motion_notify_event', self.on_mouse_move_sens)
+        
+        # Variáveis de cursor
+        self.sens_data = None
+        self.cursor_sens_v = None
+        self.cursor_sens_h = None
+        self.cursor_sens_text = None
+
+        self._setup_sensitivity_plot()
 
         self.txt_output = ctk.CTkTextbox(self.tab_data, font=("Consolas", 14))
         self.txt_output.pack(fill="both", expand=True, padx=5, pady=5)
@@ -359,37 +494,52 @@ class App(ctk.CTk):
         if self.last_result: self._update_plot(self.last_result, self.last_input_ang_cov)
 
     def open_manual(self):
-        THEORY_URL = "https://github.com/joseroberto1540/NozzleCalc/wiki" 
+        THEORY_URL = "https://github.com/joseroberto1540/NozzleCalc/wiki/User-Manual-and-Geometry-Theory" 
         try:
             webbrowser.open(THEORY_URL)
         except Exception as e:
             tk.messagebox.showerror("Error", f"Could not open:\n{e}")
 
     def run_simulation(self):
+        print(">>> INICIANDO SIMULAÇÃO...")
+        print(f"Solver atual: {type(self.calculator).__name__}")
+        
         try:
-            params = {
-                'tr': float(self.inputs['tr'].get()),
-                'k': float(self.inputs['k'].get()),
-                'pc': float(self.inputs['pc'].get()),
-                'pe': float(self.inputs['pe'].get()),
-                'ang_div': float(self.inputs['ang_div'].get()),
-                'ang_cov': float(self.inputs['ang_cov'].get()),
-                'length_pct': float(self.inputs['len_pct'].get()),
-                'rounding_factor': float(self.inputs['rounding'].get()),
-            }
+            # Coleta inputs (com tratamento de erro básico)
+            try:
+                params = {
+                    'tr': float(self.inputs['tr'].get()),
+                    'k': float(self.inputs['k'].get()),
+                    'pc': float(self.inputs['pc'].get()),
+                    'pe': float(self.inputs['pe'].get()),
+                    'ang_div': float(self.inputs['ang_div'].get()),
+                    'ang_cov': float(self.inputs['ang_cov'].get()),
+                    'length_pct': float(self.inputs['len_pct'].get()),
+                    'rounding_factor': float(self.inputs['rounding'].get()),
+                }
+            except ValueError:
+                tk.messagebox.showerror("Input Error", "Please check your numbers.\nUse points (.) not commas (,).")
+                return
+
+            # CHAMA O SOLVER ATUAL
+            # O Python vai usar automaticamente o método .compute() da classe que estiver em self.calculator
             res = self.calculator.compute(**params)
+            
+            print("Cálculo finalizado. Atualizando UI...")
             self.last_result = res 
             self.last_input_ang_cov = params['ang_cov']
+            
             self._update_text_output(res)
             self._update_plot(res, params['ang_cov'])
             self._update_3d_plot(res)
             self._update_sensitivity_analysis(params)
-        except ValueError as e:
-            self.txt_output.delete("1.0", "end")
-            self.txt_output.insert("end", f"CALCULATION ERROR:\n{str(e)}")
+            
         except Exception as e:
+            import traceback
+            traceback.print_exc() # Imprime o erro completo no terminal
             self.txt_output.delete("1.0", "end")
-            self.txt_output.insert("end", f"UNEXPECTED ERROR:\n{str(e)}")
+            self.txt_output.insert("end", f"CRITICAL ERROR:\n{str(e)}")
+            tk.messagebox.showerror("Simulation Error", str(e))
 
     def _update_text_output(self, res: NozzleResult):
         self.txt_output.delete("1.0", "end")
@@ -626,11 +776,18 @@ class App(ctk.CTk):
                      color=eff_fg, weight='bold', fontsize=10,
                      bbox=dict(boxstyle="round,pad=0.4", fc=eff_bg, ec="none", alpha=0.9))
 
-        t_param = np.linspace(0, 1, 100)
-        bx = (1 - t_param)**2 * nx + 2 * (1 - t_param) * t_param * qx + t_param**2 * ex
-        by = (1 - t_param)**2 * ny + 2 * (1 - t_param) * t_param * qy + t_param**2 * ey
-        self.ax.plot(bx, by, color='#00BFFF', linewidth=2.5, label="Bell Profile")
-        self.ax.plot(bx, -by, color='#00BFFF', linewidth=2.5)
+        # t_param = np.linspace(0, 1, 100)
+        # bx = (1 - t_param)**2 * nx + 2 * (1 - t_param) * t_param * qx + t_param**2 * ex
+        # by = (1 - t_param)**2 * ny + 2 * (1 - t_param) * t_param * qy + t_param**2 * ey
+        # self.ax.plot(bx, by, color='#00BFFF', linewidth=2.5, label="Bell Profile")
+        # self.ax.plot(bx, -by, color='#00BFFF', linewidth=2.5)
+
+        mask = res.contour_x >= 0
+        div_x = res.contour_x[mask]
+        div_y = res.contour_y[mask]
+        
+        self.ax.plot(div_x, div_y, color='#00BFFF', linewidth=2.5, label="Nozzle Profile")
+        self.ax.plot(div_x, -div_y, color='#00BFFF', linewidth=2.5)
 
         theta_conv = np.linspace(np.radians(ang_cov), np.radians(-90), 50)
         xc_conv = 0 + (1.5 * tr) * np.cos(theta_conv)
