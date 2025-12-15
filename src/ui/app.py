@@ -100,7 +100,7 @@ class App(ctk.CTk):
         # Mapeia nome -> CLASSE (não instancie aqui com ())
         self.available_solvers = {
             "Adapted Rao Method Solver (Rao)": BellNozzleSolver,
-            "Method of Characteristics Solver (MOC)": MOCSolver
+            # "Method of Characteristics Solver (MOC)": MOCSolver
         } #easyfind
         
         self.current_solver_name = "Adapted Rao Method Solver (Rao)"
