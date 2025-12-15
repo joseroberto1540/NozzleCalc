@@ -15,6 +15,8 @@ from tkinter import filedialog, messagebox
 from dataclasses import dataclass
 from typing import Tuple, Dict, Any, Optional
 from PIL import Image, ImageTk
+import ezdxf
+from ezdxf import units
 
 import customtkinter as ctk
 import numpy as np
@@ -31,6 +33,46 @@ from src.core.solvers.bell_nozzle import BellNozzleSolver
 from src.core.solvers.moc_solver import MOCSolver
 
 from src.core.models import NozzleResult
+
+class UnitManager:
+    """Gerencia conversões e fatores de escala."""
+    
+    # Fatores para converter DA unidade X PARA a unidade base do Solver
+    # Base Length: mm
+    # Base Pressure (Chamber): MPa
+    # Base Pressure (Exhaust): atm
+    
+    CONVERTERS = {
+        'length_to_mm': {
+            'mm': 1.0, 
+            'cm': 10.0, 
+            'm': 1000.0,
+            'in': 25.4,
+            'ft': 304.8  
+        },
+        'pressure_to_mpa': {
+            'MPa': 1.0, 'Pa': 1e-6, 'psi': 0.00689476, 'ksi': 6.89476, 'atm': 0.101325
+        },
+        'pressure_to_atm': {
+            'atm': 1.0, 'Pa': 9.86923e-6, 'MPa': 9.86923, 'psi': 0.068046, 'ksi': 68.046
+        }
+    }
+
+    @staticmethod
+    def convert(value: float, from_unit: str, category: str, reverse: bool = False) -> float:
+        """
+        category: 'length_to_mm', 'pressure_to_mpa', etc.
+        reverse: Se True, converte DA base PARA a unidade de exibição (usado na UI).
+        """
+        # Proteção contra unidade vazia ou inválida
+        if not from_unit or from_unit not in UnitManager.CONVERTERS.get(category, {}):
+            return value
+
+        factor = UnitManager.CONVERTERS[category].get(from_unit, 1.0)
+        
+        if reverse:
+            return value / factor
+        return value * factor
 
 class ToolTip:
     """
@@ -100,7 +142,7 @@ class App(ctk.CTk):
         # Mapeia nome -> CLASSE (não instancie aqui com ())
         self.available_solvers = {
             "Adapted Rao Method Solver (Rao)": BellNozzleSolver,
-            # "Method of Characteristics Solver (MOC)": MOCSolver
+            "Method of Characteristics Solver (MOC)": MOCSolver
         } #easyfind
         
         self.current_solver_name = "Adapted Rao Method Solver (Rao)"
@@ -130,11 +172,37 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.bind('<Return>', lambda event: self.run_simulation())
         
+        # --- NOVO LAYOUT DE GRID ---
+        # Row 0: Menu Bar Global (File, Tools...)
+        # Row 1: Conteúdo Principal (Sidebar + Main Area)
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=0)  # Menu Bar não estica
+        self.grid_rowconfigure(1, weight=1)  # Conteúdo estica
         
         self.inputs = {}
         
+        # --- ESTADO DE PREFERÊNCIAS ---
+        # Define as unidades padrão iniciais (Base do Solver)
+        self.unit_prefs = {
+            'tr': 'mm',   # Throat Radius
+            'pc': 'MPa',  # Chamber Pressure
+            'pe': 'atm'   # Exhaust Pressure
+        }
+        
+        # Mapeia qual categoria de conversão cada input usa
+        self.unit_categories = {
+            'tr': 'length_to_mm',
+            'pc': 'pressure_to_mpa',
+            'pe': 'pressure_to_atm'
+        }
+        
+        # Armazena referências para atualizar textos das labels depois
+        self.input_labels: Dict[str, ctk.CTkLabel] = {}
+
+        # 1. Cria a Barra de Menu Global (Topo Absoluto)
+        self._create_menubar()
+        
+        # 2. Cria as áreas principais (deslocadas para Row 1)
         self._create_sidebar()
         self._create_main_area()
         
@@ -156,6 +224,109 @@ class App(ctk.CTk):
         self.bind('<Control-r>', lambda event: self.run_simulation())
         self.bind('<Control-e>', lambda event: self.export_csv())
 
+    def _create_menubar(self):
+        """
+        Cria a barra de menu superior global (File, Tools, etc).
+        Estilo flat e minimalista.
+        """
+        # Frame que ocupa toda a largura (columnspan=2) na row=0
+        self.menubar_frame = ctk.CTkFrame(self, height=28, corner_radius=0, fg_color="#1e1e1e")
+        self.menubar_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
+        
+        # Configuração comum para botões de menu (parecem texto até passar o mouse)
+        menu_btn_config = {
+            "width": 50, 
+            "height": 28,
+            "fg_color": "transparent",
+            "hover_color":"#3a3a3a",
+            "font": ctk.CTkFont(size=12),
+            "anchor": "w"
+        }
+
+        # --- BOTÃO FILE ---
+        self.btn_menu_file = ctk.CTkButton(self.menubar_frame, text="File", command=self._post_file_menu, **menu_btn_config)
+        self.btn_menu_file.pack(side="left", padx=2)
+
+        self.btn_menu_edit = ctk.CTkButton(self.menubar_frame, text="Edit", command=self._post_edit_menu, **menu_btn_config)
+        self.btn_menu_edit.pack(side="left", padx=2)
+
+        # --- BOTÃO TOOLS ---
+        self.btn_menu_tools = ctk.CTkButton(self.menubar_frame, text="Tools", command=self._post_tools_menu, **menu_btn_config)
+        self.btn_menu_tools.pack(side="left", padx=2)
+
+    def _post_edit_menu(self):
+        """Menu dropdown para Edit"""
+        menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#404040", activeforeground="white", borderwidth=0)
+        
+        # Opção Preferences
+        menu.add_command(label="    Preferences...", command=self.open_preferences)
+        
+        try:
+            x = self.btn_menu_edit.winfo_rootx()
+            y = self.btn_menu_edit.winfo_rooty() + self.btn_menu_edit.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _post_file_menu(self):
+        """
+        Exibe o menu File com o submenu 'Export Geometry' em cascata.
+        """
+        # Configuração visual do menu (Dark Theme)
+        menu_style = {
+            "tearoff": 0,
+            "bg": "#2b2b2b",
+            "fg": "white",
+            "activebackground": "#404040",
+            "activeforeground": "white",
+            "borderwidth": 0,
+            "font": ("Segoe UI", 9) # Fonte padrão do sistema fica mais limpa
+        }
+
+        # 1. Menu Principal (File)
+        menu = tk.Menu(self, **menu_style)
+        
+        # Itens Principais
+        menu.add_command(label="    Open Project...      (Ctrl+O)", command=self.open_project)
+        menu.add_command(label="    Save Project           (Ctrl+S)", command=self.save_project)
+        menu.add_command(label="    Save As...", command=self.save_project_as)
+        menu.add_separator()
+
+        # 2. Submenu de Exportação (O "Menu Lateral")
+        export_menu = tk.Menu(menu, **menu_style)
+        
+        # Adiciona as opções específicas ao submenu
+        export_menu.add_command(label="    To DXF (CAD / Fusion 360)...", command=self.export_dxf_only)
+        export_menu.add_command(label="    To CSV (Excel / Points)...", command=self.export_csv_only)
+
+        # 3. Anexa o submenu ao menu File usando 'add_cascade'
+        menu.add_cascade(label="    Export Geometry", menu=export_menu)
+
+        menu.add_separator()
+        menu.add_command(label="    Exit", command=self.on_closing)
+        
+        # Posicionamento do popup
+        try:
+            x = self.btn_menu_file.winfo_rootx()
+            y = self.btn_menu_file.winfo_rooty() + self.btn_menu_file.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _post_tools_menu(self):
+        """Lógica para exibir o menu nativo do Tkinter abaixo do botão Tools"""
+        menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#404040", activeforeground="white", borderwidth=0)
+        
+        menu.add_command(label="    Flow Properties Table", command=self.open_flow_properties)
+        # Futuramente: menu.add_command(label="    Unit Converter", command=...)
+        
+        try:
+            x = self.btn_menu_tools.winfo_rootx()
+            y = self.btn_menu_tools.winfo_rooty() + self.btn_menu_tools.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+    
     def _set_input_state(self, key: str, state: str):
         """Altera visualmente o estado de um input (normal vs disabled)."""
         if key not in self.inputs: return
@@ -203,7 +374,7 @@ class App(ctk.CTk):
         # Mantenha a criação do frame e dos inputs como estava...
         self.sidebar = ctk.CTkScrollableFrame(self, width=300, corner_radius=0)
         self.sidebar.configure(fg_color="transparent")
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid(row=1, column=0, sticky="nsew") # <--- ALTERADO PARA ROW 1
 
         self.lbl_title = ctk.CTkLabel(self.sidebar, text="Input Parameters", 
                                       font=ctk.CTkFont(size=20, weight="bold"))
@@ -220,7 +391,7 @@ class App(ctk.CTk):
         ctk.CTkFrame(self.sidebar, height=2, fg_color="gray30").pack(fill="x", padx=20, pady=5)
         
         # --- INPUTS (Mantenha seus inputs normais aqui) ---
-        self._add_input("tr", "Throat Radius (mm)", "13.5")
+        self._add_input("tr", "Throat Radius", "13.5")
         
         lbl_prop = ctk.CTkLabel(self.sidebar, text="Propellant Preset", anchor="w")
         lbl_prop.pack(fill="x", padx=20, pady=(5, 0))
@@ -228,13 +399,13 @@ class App(ctk.CTk):
         self.prop_menu.set("KNSB (Sorbitol)")
         self.prop_menu.pack(fill="x", padx=20, pady=(0, 5))
         
-        self._add_input("k", "Specific Heat Ratio (Cp/Cv)", "1.135")
-        self._add_input("pc", "Chamber Pressure (MPa)", "5.0")
-        self._add_input("pe", "Exhaust Pressure (atm)", "1.5")
+        self._add_input("k", "Specific Heat Ratio [Cp/Cv]", "1.135")
+        self._add_input("pc", "Chamber Pressure", "5.0")
+        self._add_input("pe", "Exhaust Pressure", "1.5")
         self._add_input("ang_div", "Divergent Angle (deg)", "15") 
         self._add_input("ang_cov", "Convergent Angle (deg)", "-135")
-        self._add_input("len_pct", "Equivalent Lenght (0.6-0.9)", "0.8")
-        self._add_input("rounding", "Throat Rounding Factor (TRF)", "2.00")
+        self._add_input("len_pct", "Equivalent Lenght [0.6-0.9]", "0.8")
+        self._add_input("rounding", "Throat Rounding Factor [TRF]", "2.00")
         
         self.inputs['k'].configure(state="disabled", fg_color="#1A1A1A", border_color="#333333", text_color="gray")
 
@@ -286,11 +457,23 @@ class App(ctk.CTk):
                 print(f"ERRO AO INSTANCIAR SOLVER: {e}")
                 tk.messagebox.showerror("Error", f"Could not load solver:\n{e}")
 
-    def _add_input(self, key: str, label_text: str, default: str):
+    def _add_input(self, key: str, label_base_text: str, default: str):
         frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         frame.pack(pady=3, padx=20, fill="x")
-        lbl = ctk.CTkLabel(frame, text=label_text, anchor="w")
+        
+        # Verifica se este input tem unidade configurável
+        current_unit = self.unit_prefs.get(key, "")
+        display_text = f"{label_base_text} ({current_unit})" if current_unit else label_base_text
+        
+        lbl = ctk.CTkLabel(frame, text=display_text, anchor="w")
         lbl.pack(fill="x")
+        
+        # ARMAZENA A REFERÊNCIA DA LABEL E O TEXTO BASE
+        self.input_labels[key] = {
+            "widget": lbl,
+            "base_text": label_base_text
+        }
+        
         entry = ctk.CTkEntry(frame)
         entry.insert(0, default)
         entry.pack(fill="x")
@@ -311,15 +494,14 @@ class App(ctk.CTk):
         """
         Configura a área principal (Direita), separando a Toolbar do Conteúdo.
         """
-        # Frame principal da direita
+        # MUDANÇA AQUI: row=1
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=0, pady=0)
+        self.main_frame.grid(row=1, column=1, sticky="nsew", padx=0, pady=0) # <--- ALTERADO PARA ROW 1
         
-        # 1. Cria a Barra de Ferramentas Profissional (Topo)
-        self._create_toolbar()
+        # 1. Action Toolbar (Simplificada)
+        self._create_action_bar() # Renomeei para ficar claro
         
-        # 2. Cria a Área de Abas (Centro/Baixo)
-        # Note que usamos pack com expand=True para preencher o resto
+        # 2. Tabs
         self.tabview = ctk.CTkTabview(self.main_frame)
         self.tabview.pack(fill="both", expand=True, padx=15, pady=(5, 15))
         
@@ -333,83 +515,153 @@ class App(ctk.CTk):
         # --- INICIALIZAÇÃO DOS PLOTS (Mantida a lógica original) ---
         self._init_plots()
 
-    def _create_toolbar(self) -> None:
+    def _create_action_bar(self) -> None:
         """
-        Toolbar Profissional (Ribbon Style).
-        Ordem Lógica: Arquivos -> COMPUTE (Destaque) -> Ferramentas de Análise -> Visualização
+        Action Bar Profissional (Logo abaixo do Menu Global).
+        Contém apenas as ações operacionais principais.
         """
-        # Container Principal da Toolbar
-        toolbar_frame = ctk.CTkFrame(self.main_frame, height=60, corner_radius=8, fg_color="#2B2B2B")
-        toolbar_frame.pack(fill="x", side="top", padx=15, pady=15)
+        toolbar_frame = ctk.CTkFrame(self.main_frame, height=50, corner_radius=5, fg_color="#2B2B2B")
+        toolbar_frame.pack(fill="x", side="top", padx=15, pady=(10, 10))
         
-        btn_config = {"height": 32, "font": ctk.CTkFont(size=12)}
-        
-        # --- GRUPO 1: ARQUIVO (Esquerda) ---
-        grp_file = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
-        grp_file.pack(side="left", padx=(10, 5), pady=8)
-        
-        self.btn_open = ctk.CTkButton(grp_file, text="📂 Open", command=self.open_project, 
-                                      width=70, fg_color="#444444", hover_color="#555555", **btn_config)
-        self.btn_open.pack(side="left", padx=2)
-        ToolTip(self.btn_open, "Open Project (Ctrl+O)")  # <--- TOOLTIP AQUI
-        
-        self.btn_save = ctk.CTkButton(grp_file, text="💾 Save", command=self.save_project, 
-                                      width=70, fg_color="#444444", hover_color="#555555", **btn_config)
-        self.btn_save.pack(side="left", padx=2)
-        ToolTip(self.btn_save, "Save Project (Ctrl+S)")  # <--- TOOLTIP AQUI
-
-        # [RESTAURADO] Save As - Importante para versionamento de projeto
-        self.btn_save_as = ctk.CTkButton(grp_file, text="💾 Save As...", command=self.save_project_as, 
-                                         width=90, fg_color="#444444", hover_color="#555555", **btn_config)
-        self.btn_save_as.pack(side="left", padx=2)
-
-        # Divisor Visual
-        ctk.CTkFrame(toolbar_frame, width=2, height=25, fg_color="#555555").pack(side="left", padx=5)
-
-        # --- GRUPO 2: ACTION HERO (Esquerda - Logo após arquivos) ---
-        # Este é o botão principal. Ele fica antes das ferramentas de análise.
-        
+        # --- ESQUERDA: AÇÃO PRINCIPAL (COMPUTE) ---
+        # Botão Verde Grande e Chamativo
         self.btn_run = ctk.CTkButton(toolbar_frame, text="▶  COMPUTE GEOMETRY", 
                                      command=self.run_simulation,
-                                     width=180, height=36, # Maior destaque
+                                     width=200, height=32,
                                      font=ctk.CTkFont(size=13, weight="bold"),
-                                     fg_color="#00C853", hover_color="#00E676", # Verde Neon
+                                     fg_color="#00C853", hover_color="#00E676",
                                      text_color="white")
-        # padx=(10, 10) garante que ele tenha espaço de respiro em relação aos outros
-        self.btn_run.pack(side="left", padx=15)
-        ToolTip(self.btn_run, "Run Simulation (Ctrl+R)")  # <--- TOOLTIP AQUI
+        self.btn_run.pack(side="left", padx=10, pady=8)
+        ToolTip(self.btn_run, "Run Simulation (Ctrl+R)")
 
-        # Divisor Visual (Opcional, mas ajuda a separar a ação das ferramentas de análise)
-        ctk.CTkFrame(toolbar_frame, width=2, height=25, fg_color="#555555").pack(side="left", padx=5)
+        # --- DIREITA: VISUALIZAÇÃO E AJUDA ---
+        # Grupo alinhado à direita
+        grp_right = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
+        grp_right.pack(side="right", padx=10)
 
-        # --- GRUPO 3: TOOLS & ANALYSIS (Esquerda - Após o Compute) ---
-        grp_tools = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
-        grp_tools.pack(side="left", padx=5)
+        # Botão Refit (Laranja)
+        self.btn_reset_view = ctk.CTkButton(grp_right, text="⟲ Refit View", command=self.reset_view,
+                                            width=100, height=28,
+                                            font=ctk.CTkFont(size=12),
+                                            fg_color="#E67E22", hover_color="#D35400")
+        self.btn_reset_view.pack(side="left", padx=5)
+        ToolTip(self.btn_reset_view, "Reset Zoom and Pan")
 
-        self.btn_flow = ctk.CTkButton(grp_tools, text="📊 Flow Props", command=self.open_flow_properties,
-                                      width=110, fg_color="#2980B9", hover_color="#3498DB", **btn_config)
-        self.btn_flow.pack(side="left", padx=3)
+        # Divisor pequeno
+        ctk.CTkFrame(grp_right, width=1, height=20, fg_color="#555555").pack(side="left", padx=5)
 
-        self.btn_export = ctk.CTkButton(grp_tools, text="📤 Export CSV", command=self.export_csv,
-                                        width=110, fg_color="#27AE60", hover_color="#2ECC71", **btn_config)
-        self.btn_export.pack(side="left", padx=3)
-        ToolTip(self.btn_export, "Export Geometry (Ctrl+E)")  # <--- TOOLTIP AQUI
+        # Botão Help (Discreto)
+        self.btn_manual = ctk.CTkButton(grp_right, text="📘 Help", command=self.open_manual,
+                                        width=70, height=28,
+                                        font=ctk.CTkFont(size=12),
+                                        fg_color="transparent", border_width=1, border_color="#666",
+                                        hover_color="#444", text_color="#DDD")
+        self.btn_manual.pack(side="left", padx=5)
 
-        # --- GRUPO 4: UTILITÁRIOS (Direita - Alinhados no final) ---
-        grp_utils = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
-        grp_utils.pack(side="right", padx=10)
+    def open_preferences(self):
+        """Janela popup para configuração de unidades."""
+        win = ctk.CTkToplevel(self)
+        win.title("Preferences")
+        win.geometry("400x350")
+        win.attributes('-topmost', True)
+        
+        ctk.CTkLabel(win, text="Unit Settings", font=("Arial", 16, "bold")).pack(pady=15)
+        
+        # Container para os dropdowns
+        form = ctk.CTkFrame(win, fg_color="transparent")
+        form.pack(fill="both", expand=True, padx=20)
+        
+        # Dicionário temporário para guardar as escolhas antes de salvar
+        temp_vars = {}
 
-        # Manual discreto
-        self.btn_manual = ctk.CTkButton(grp_utils, text="📘 Help", command=self.open_manual,
-                                        width=60, fg_color="transparent", border_width=1, border_color="#666",
-                                        hover_color="#444", text_color="#DDD", **btn_config)
-        self.btn_manual.pack(side="right", padx=5)
+        def add_combo(label, key, options):
+            row = ctk.CTkFrame(form, fg_color="transparent")
+            row.pack(fill="x", pady=5)
+            ctk.CTkLabel(row, text=label, anchor="w").pack(side="left")
+            
+            var = ctk.StringVar(value=self.unit_prefs[key])
+            temp_vars[key] = var
+            
+            combo = ctk.CTkOptionMenu(row, variable=var, values=options, width=100)
+            combo.pack(side="right")
 
-        # Reset View (Laranja)
-        self.btn_reset_view = ctk.CTkButton(grp_utils, text="⟲ Reset View", command=self.reset_view,
-                                            width=100, fg_color="#E67E22", hover_color="#D35400", **btn_config)
-        self.btn_reset_view.pack(side="right", padx=5)
+        # Criação dos campos
+        add_combo("Throat Radius (Length):", "tr", ["mm", "cm", "m", "in", "ft"])
+        add_combo("Chamber Pressure:", "pc", ["MPa", "Pa", "psi", "ksi", "atm"])
+        add_combo("Exhaust Pressure:", "pe", ["atm", "Pa", "MPa", "psi", "ksi"])
 
+        def apply_changes():
+            # 1. Recupera valores antigos e novos
+            old_prefs = self.unit_prefs.copy()
+            new_prefs = {k: v.get() for k, v in temp_vars.items()}
+            
+            # 2. Atualiza Labels e Converte Valores nos Inputs
+            self._update_units_ui(old_prefs, new_prefs)
+            
+            # 3. Salva estado
+            self.unit_prefs = new_prefs
+            win.destroy()
+
+        ctk.CTkButton(win, text="Apply & Save", command=apply_changes, fg_color="#27AE60").pack(pady=20)
+
+    def _update_units_ui(self, old_prefs, new_prefs):
+        """Atualiza o texto das labels e converte os valores numéricos já digitados."""
+        for key, new_unit in new_prefs.items():
+            old_unit = old_prefs[key]
+            if key not in self.inputs: continue
+            
+            # A. Atualiza Label
+            if key in self.input_labels:
+                data = self.input_labels[key]
+                data["widget"].configure(text=f"{data['base_text']} ({new_unit})")
+            
+            # B. Converte Valor no Input (UX Premium)
+            # Se mudou de mm para m, o valor 1000 deve virar 1
+            if old_unit != new_unit:
+                try:
+                    current_val_str = self.inputs[key].get()
+                    if not current_val_str: continue
+                    
+                    val = float(current_val_str)
+                    category = self.unit_categories[key]
+                    
+                    # Passo 1: Converte do Antigo para a Base (ex: m -> mm)
+                    val_in_base = UnitManager.convert(val, old_unit, category, reverse=False)
+                    
+                    # Passo 2: Converte da Base para o Novo (ex: mm -> cm)
+                    # Para ir da Base -> Display, usamos reverse=True
+                    val_new_display = UnitManager.convert(val_in_base, new_unit, category, reverse=True)
+                    
+                    self.inputs[key].delete(0, tk.END)
+                    # Formatação inteligente para evitar 0.0000001
+                    self.inputs[key].insert(0, f"{val_new_display:.6g}")
+                    
+                except ValueError:
+                    pass # Se tiver texto inválido, ignora conversão
+
+    def update_pa_unit_pref(self, choice):
+        """Salva a preferência de unidade da pressão ambiente."""
+        self.unit_prefs['pa'] = choice
+    
+    def _get_converted_value(self, key: str) -> float:
+        """
+        Lê o input, verifica a preferência de unidade atual e converte
+        para a Unidade Base do Solver (mm, MPa ou atm).
+        """
+        try:
+            raw_val = float(self.inputs[key].get())
+            
+            # Se o input tem unidade configurada, converte para a Base do Solver
+            if key in self.unit_prefs:
+                user_unit = self.unit_prefs[key]
+                category = self.unit_categories[key]
+                # Converte Display -> Base (ex: cm -> mm; Pa -> MPa)
+                return UnitManager.convert(raw_val, user_unit, category, reverse=False)
+            
+            return raw_val
+        except ValueError:
+            return 0.0 # Ou levantar erro, dependendo de como preferir tratar
+    
     def _init_plots(self) -> None:
         """
         Inicializa TODAS as áreas de plotagem (2D, 3D, Separação, Sensibilidade) e a Barra de Status.
@@ -421,6 +673,13 @@ class App(ctk.CTk):
         
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.tab_plot)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        self.unit_prefs = {
+            'tr': 'mm',   # Throat Radius (Define a unidade de comprimento global)
+            'pc': 'MPa',  # Chamber Pressure
+            'pe': 'atm',  # Exhaust Pressure (Define a unidade de pressão dos gráficos de saída)
+            'pa': 'Pa'    # NOVO: Ambient Pressure (Aba Separação)
+        }
         
         # --- 2. BARRA DE STATUS (Rodapé da Aba 2D) ---
         # [CRÍTICO] Esta é a parte que estava faltando/foi apagada e causou o erro.
@@ -457,10 +716,22 @@ class App(ctk.CTk):
         self.sep_controls = ctk.CTkFrame(self.tab_sep, height=50, fg_color="transparent")
         self.sep_controls.pack(fill="x", padx=10, pady=5)
         
-        ctk.CTkLabel(self.sep_controls, text="Ambient Pressure (Pa):").pack(side="left", padx=5)
+        ctk.CTkLabel(self.sep_controls, text="Ambient Pressure:").pack(side="left", padx=5)
+        
+        # Input Numérico
         self.entry_pa = ctk.CTkEntry(self.sep_controls, width=100)
         self.entry_pa.insert(0, "101325") 
         self.entry_pa.pack(side="left", padx=5)
+        
+        # NOVO: Dropdown de Unidade para Pressão Ambiente
+        self.combo_pa_unit = ctk.CTkOptionMenu(
+            self.sep_controls, 
+            values=["Pa", "atm", "psi", "bar", "MPa"],
+            width=80,
+            command=self.update_pa_unit_pref # Callback para salvar a escolha
+        )
+        self.combo_pa_unit.set("Pa") # Padrão
+        self.combo_pa_unit.pack(side="left", padx=5)
         
         ctk.CTkButton(self.sep_controls, text="🔄 Update Plot", width=100, 
                       command=self.refresh_separation_only, 
@@ -566,30 +837,21 @@ class App(ctk.CTk):
             # --- 2. VALIDAÇÃO DE VERSÃO (NOVO) ---
             file_ver_str = data.get("version", "0.0.0") # Se não tiver versão, assume antiga
             
-            # Precisamos converter para objeto Version para comparar (ex: 1.10 > 1.9)
-            # Se der erro no parse, assumimos versão 0
-            try:
-                v_file = version.parse(file_ver_str)
-                v_app = version.parse(CURRENT_VERSION)
-            except:
-                v_file = version.parse("0.0.0")
-                v_app = version.parse(CURRENT_VERSION)
+            # --- 1. RESTAURAÇÃO DE UNIDADES (NOVO) ---
+            if "unit_prefs" in data:
+                saved_prefs = data["unit_prefs"]
+                
+                # Atualiza o dicionário interno
+                self.unit_prefs.update(saved_prefs)
+                
+                # Atualiza VISUALMENTE as Labels (ex: muda de "mm" para "m")
+                for key, unit in self.unit_prefs.items():
+                    if key in self.input_labels:
+                        lbl_data = self.input_labels[key]
+                        # Atualiza o texto da label usando o texto base + unidade salva
+                        lbl_data["widget"].configure(text=f"{lbl_data['base_text']} ({unit})")
 
-            # CASO A: Arquivo criado numa versão MAIS NOVA que o App (Perigo!)
-            if v_file > v_app:
-                msg = (f"This file was saved in a newer version of NozzleCalc ({file_ver_str}).\n"
-                       f"You are using version {CURRENT_VERSION}.\n\n"
-                       "Some features or data may be lost if you open and save it.\n"
-                       "Do you want to proceed?")
-                if not tk.messagebox.askyesno("Version Mismatch", msg, icon='warning'):
-                    return # Cancela a abertura
-
-            # CASO B: Arquivo muito antigo (Migração)
-            # Aqui você pode colocar lógica futura. Por enquanto, só avisamos se for muito drástico.
-            # if v_file < version.parse("2.0.0"): ... 
-
-            # --- 3. RESTAURAÇÃO DE DADOS (Mantém igual) ---
-            
+            # --- 2. RESTAURAÇÃO DE DADOS ---
             # Restaura Solver
             if "solver" in data:
                 saved_solver = data["solver"]
@@ -606,13 +868,10 @@ class App(ctk.CTk):
             for key, value in data.items():
                 if key in self.inputs:
                     entry = self.inputs[key]
-                    original_state = entry.cget("state")
+                    # Precisamos lidar com estados disabled (como o 'k' do propelente)
+                    prev_state = entry.cget("state")
                     
-                    # Log de migração silenciosa:
-                    # Se você renomeou uma variável no código, aqui você faria:
-                    # if key == "old_name": self.inputs["new_name"].insert(0, value)
-
-                    if original_state == "disabled":
+                    if prev_state == "disabled":
                         entry.configure(state="normal")
                         entry.delete(0, tk.END)
                         entry.insert(0, str(value))
@@ -621,16 +880,21 @@ class App(ctk.CTk):
                         entry.delete(0, tk.END)
                         entry.insert(0, str(value))
             
+            # Finalização
             self.current_file_path = file_path
             filename = os.path.basename(file_path)
             self.title(f"NozzleCalc {CURRENT_VERSION} - [{filename}]")
             
+            # Executa a simulação automaticamente ao carregar
             self.run_simulation()
             
         except json.JSONDecodeError:
             tk.messagebox.showerror("Error", "File corrupted or invalid format.")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             tk.messagebox.showerror("Error", f"Failed to open file:\n{e}")
+            
 
     def save_project(self):
         if self.current_file_path: self._write_to_file(self.current_file_path)
@@ -645,58 +909,211 @@ class App(ctk.CTk):
             self.current_file_path = file_path
             self._write_to_file(file_path)
 
-    def export_csv(self):
-        if not self.last_result: return
+    def export_geometry(self) -> None:
+        """
+        Método Mestre: Abre diálogo de salvamento e direciona para CSV ou DXF
+        baseado na extensão escolhida pelo usuário.
+        """
+        if not self.last_result:
+            tk.messagebox.showwarning("Export Warning", "No simulation data available.\nPlease run the simulation first.")
+            return
         
+        # Diálogo unificado com filtros para CSV e DXF
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".csv", 
-            filetypes=[("CSV File", "*.csv"), ("Text File", "*.txt")], 
-            title="Export Nozzle Coordinates"
+            defaultextension=".dxf",
+            filetypes=[
+                ("DXF", "*.dxf"),
+                ("CSV", "*.csv"),
+                ("Text File", "*.txt")
+            ],
+            title="Export Geometry"
         )
         
-        if file_path:
-            use_dot = messagebox.askyesno(
-                "Decimal Format", 
-                "Use DOT (.) as decimal separator?\n\n"
-                "Yes = International Standard/CAD (13.5)\n"
-                "No = BR/Excel Standard (13,5)"
-            )
-            
-            try:
-                res = self.last_result
-                with open(file_path, 'w') as f:
-                    col_sep = "," if use_dot else ";"
-                    f.write(f"X_mm{col_sep}Y_mm{col_sep}Z_mm\n")
-                    
-                    for x, y in zip(res.contour_x, res.contour_y):
-                        if use_dot:
-                            f.write(f"{x/10:.6f}{col_sep}{y/10:.6f}{col_sep}0.000000\n")
-                        else:
-                            x_str = f"{x/10:.6f}".replace('.', ',')
-                            y_str = f"{y/10:.6f}".replace('.', ',')
-                            f.write(f"{x_str}{col_sep}{y_str}{col_sep}0,000000\n")
-                        
-                tk.messagebox.showinfo("NozzleCalc", "Success! Geometry exported successfully!\nReady for CAD import.")
+        if not file_path:
+            return # Usuário cancelou
+
+        try:
+            # Roteamento baseado na extensão
+            if file_path.lower().endswith('.dxf'):
+                self._export_to_dxf(file_path)
+            else:
+                self._export_to_csv(file_path)
                 
-                if sys.platform == 'win32':
-                    os.startfile(file_path)
-                    
-            except Exception as e:
-                tk.messagebox.showerror("Error", f"Export failed:\n{e}")
+        except Exception as e:
+            tk.messagebox.showerror("Export Error", f"Failed to export file:\n{e}")
+
+    def export_dxf_only(self):
+        """Chamada direta para exportar DXF via menu."""
+        if not self.last_result:
+            tk.messagebox.showwarning("Export Warning", "Please run the simulation first.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".dxf",
+            filetypes=[("DXF (AutoCAD/Fusion)", "*.dxf")],
+            title="Export Geometry to DXF"
+        )
+        if file_path:
+            self._export_to_dxf(file_path)
+
+    def export_csv_only(self):
+        """Chamada direta para exportar CSV via menu."""
+        if not self.last_result:
+            tk.messagebox.showwarning("Export Warning", "Please run the simulation first.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV File", "*.csv"), ("Text File", "*.txt")],
+            title="Export Geometry to CSV"
+        )
+        if file_path:
+            self._export_to_csv(file_path)
+
+    def _export_to_dxf(self, filename: str) -> None:
+        """
+        Gera um DXF OTIMIZADO PARA CAD (Fusion 360/SolidWorks).
+        - Reduz contagem de pontos (evita travar o sketch).
+        - Fecha o polígono (permite 'Revolve' imediato).
+        """
+        res = self.last_result
+        
+        # --- 1. CONFIGURAÇÃO DXF ---
+        doc = ezdxf.new('R2010') 
+        doc.header['$INSUNITS'] = units.MM 
+        msp = doc.modelspace()
+
+        # Camada única e limpa para evitar conflitos de importação
+        doc.layers.new(name='NOZZLE_PROFILE', dxfattribs={'color': 4}) # Ciano
+
+        # --- 2. OTIMIZAÇÃO DE PONTOS (CRÍTICO PARA FUSION 360) ---
+        # Fusion odeia milhares de pontos. Vamos filtrar pontos muito próximos (< 0.05mm)
+        raw_x = res.contour_x
+        raw_y = res.contour_y
+        
+        optimized_points = []
+        last_x, last_y = -999, -999
+        min_dist_sq = 0.05 ** 2  # 0.05mm de resolução mínima (suficiente para usinagem)
+
+        for x, y in zip(raw_x, raw_y):
+            # Sempre inclui o primeiro ponto
+            if len(optimized_points) == 0:
+                optimized_points.append((x, y))
+                last_x, last_y = x, y
+                continue
+            
+            # Distância Euclidiana ao quadrado (mais rápido que sqrt)
+            dist_sq = (x - last_x)**2 + (y - last_y)**2
+            
+            # Só adiciona se o ponto estiver longe o suficiente do anterior
+            # OU se for o último ponto absoluto da lista
+            if dist_sq > min_dist_sq:
+                optimized_points.append((x, y))
+                last_x, last_y = x, y
+
+        # Garante que o último ponto exato da simulação esteja lá
+        final_pt = (raw_x[-1], raw_y[-1])
+        if optimized_points[-1] != final_pt:
+            optimized_points.append(final_pt)
+
+        print(f"DXF Optimization: Reduced {len(raw_x)} points to {len(optimized_points)} points.")
+
+        # --- 3. FECHAMENTO DO POLÍGONO (CLOSED LOOP) ---
+        # Para o Fusion reconhecer como "Profile" (azul claro), precisamos fechar a área.
+        # Caminho: Começo(0,r) -> Curva -> Fim(L, r_exit) -> Desce pro Eixo(L, 0) -> Volta pro Início(0,0) -> Sobe(0,r)
+        
+        # Pega o último ponto da curva
+        end_x, end_y = optimized_points[-1]
+        start_x, start_y = optimized_points[0]
+
+        # Adiciona pontos para fechar o loop pelo eixo X
+        optimized_points.append((end_x, 0.0))    # Desce até o eixo na saída
+        optimized_points.append((start_x, 0.0))  # Volta pelo eixo até a entrada
+        # O ezdxf fecha automaticamente o ultimo segmento se usarmos flag=1 ou close=True, 
+        # mas adicionar explicitamente ajuda alguns parsers.
+
+        # --- 4. DESENHO ---
+        # LWPOLYLINE é a entidade mais leve e compatível
+        msp.add_lwpolyline(
+            optimized_points, 
+            dxfattribs={'layer': 'NOZZLE_PROFILE', 'closed': True}
+        )
+        
+        # Opcional: Adicionar uma linha de centro separada em outro layer apenas para referência
+        doc.layers.new(name='AXIS_REF', dxfattribs={'color': 1}) # Vermelho
+        msp.add_line((start_x - 5, 0), (end_x + 5, 0), dxfattribs={'layer': 'AXIS_REF'})
+
+        # --- 5. SALVAR ---
+        try:
+            doc.saveas(filename)
+            
+            tk.messagebox.showinfo("Export Success", 
+                                f"DXF exported for Fusion 360!\n\n"
+                                f"Reduced points: {len(optimized_points)} (Optimization Active)\n"
+                                f"Closed Loop: Yes\n"
+                                f"Units: mm")
+            
+            if sys.platform == 'win32':
+                os.startfile(filename)
+                
+        except PermissionError:
+             tk.messagebox.showerror("Export Error", "File is open in another program.\nPlease close it and try again.")
+
+    def _export_to_csv(self, file_path: str) -> None:
+        """
+        Lógica legada de exportação CSV (Refatorada para método próprio).
+        """
+        use_dot = messagebox.askyesno(
+            "Decimal Format", 
+            "Use DOT (.) as decimal separator?\n\n"
+            "Yes = International Standard/CAD (13.5)\n"
+            "No = BR/Excel Standard (13,5)"
+        )
+        
+        res = self.last_result
+        try:
+            with open(file_path, 'w') as f:
+                col_sep = "," if use_dot else ";"
+                f.write(f"X_mm{col_sep}Y_mm{col_sep}Z_mm\n")
+                
+                for x, y in zip(res.contour_x, res.contour_y):
+                    if use_dot:
+                        f.write(f"{x:.6f}{col_sep}{y:.6f}{col_sep}0.000000\n")
+                    else:
+                        x_str = f"{x:.6f}".replace('.', ',')
+                        y_str = f"{y:.6f}".replace('.', ',')
+                        f.write(f"{x_str}{col_sep}{y_str}{col_sep}0,000000\n")
+                        
+            tk.messagebox.showinfo("Export Success", "CSV exported successfully!")
+            
+            if sys.platform == 'win32':
+                os.startfile(file_path)
+                
+        except Exception as e:
+            raise e # Repassa o erro para o try/except do export_geometry lidar
 
     def _write_to_file(self, path):
         try:
+            # Pega os valores exatamente como estão na tela (Display Values)
             data = {key: entry.get() for key, entry in self.inputs.items()}
+            
             data["propellant"] = self.prop_menu.get()
             data["solver"] = self.current_solver_name
+            
+            # --- NOVO: SALVA AS UNIDADES ESCOLHIDAS ---
+            data["unit_prefs"] = self.unit_prefs
 
-            # --- ASSINATURA DO ARQUIVO ---
+            # Assinatura do arquivo
             data["file_type"] = "nozzle_calc_project"
             data["version"] = CURRENT_VERSION
 
-            with open(path, 'w') as f: json.dump(data, f, indent=4)
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=4)
+                
             tk.messagebox.showinfo("Saved", "Project saved successfully!")
-        except Exception as e: tk.messagebox.showerror("Error", str(e))
+            
+        except Exception as e:
+            tk.messagebox.showerror("Error", str(e))
 
     def refresh_plot_only(self):
         if self.last_result: self._update_plot(self.last_result, self.last_input_ang_cov)
@@ -710,23 +1127,22 @@ class App(ctk.CTk):
 
     def run_simulation(self):
         print(">>> INICIANDO SIMULAÇÃO...")
-        print(f"Solver atual: {type(self.calculator).__name__}")
         
         try:
-            # Coleta inputs (com tratamento de erro básico)
+            # Coleta inputs usando o método centralizado
             try:
                 params = {
-                    'tr': float(self.inputs['tr'].get()),
+                    'tr': self._get_converted_value('tr'),           # Retorna sempre mm
                     'k': float(self.inputs['k'].get()),
-                    'pc': float(self.inputs['pc'].get()),
-                    'pe': float(self.inputs['pe'].get()),
+                    'pc': self._get_converted_value('pc'),           # Retorna sempre MPa
+                    'pe': self._get_converted_value('pe'),           # Retorna sempre atm
                     'ang_div': float(self.inputs['ang_div'].get()),
                     'ang_cov': float(self.inputs['ang_cov'].get()),
                     'length_pct': float(self.inputs['len_pct'].get()),
                     'rounding_factor': float(self.inputs['rounding'].get()),
                 }
             except ValueError:
-                tk.messagebox.showerror("Input Error", "Please check your numbers.\nUse points (.) not commas (,).")
+                tk.messagebox.showerror("Input Error", "Please check your numbers.")
                 return
 
             # CHAMA O SOLVER ATUAL
@@ -742,6 +1158,7 @@ class App(ctk.CTk):
             self._update_3d_plot(res)
             self._update_sensitivity_analysis(params)
             self.refresh_separation_only()
+            self._flash_refit_button()
             
         except Exception as e:
             import traceback
@@ -749,6 +1166,20 @@ class App(ctk.CTk):
             self.txt_output.delete("1.0", "end")
             self.txt_output.insert("end", f"CRITICAL ERROR:\n{str(e)}")
             tk.messagebox.showerror("Simulation Error", str(e))
+    
+    def _flash_refit_button(self):
+        """
+        Faz o botão 'Refit View' brilhar temporariamente para sugerir ação.
+        """
+        # Cores
+        original_color = "#E67E22"  # O Laranja original que definimos
+        flash_color = "#FFD54F"     # Um Amarelo/Dourado bem claro (Glow)
+        
+        # 1. Acende (Muda para a cor clara)
+        self.btn_reset_view.configure(fg_color=flash_color, text_color="black") # Texto preto para contraste no claro
+        
+        # 2. Agenda o retorno ao normal após 500ms
+        self.after(500, lambda: self.btn_reset_view.configure(fg_color=original_color, text_color="white"))
 
     def _update_text_output(self, res: NozzleResult):
         self.txt_output.delete("1.0", "end")
@@ -893,72 +1324,87 @@ class App(ctk.CTk):
 
     def _update_plot(self, res: NozzleResult, ang_cov: float) -> None:
         """
-        Atualiza o gráfico (limpo) e envia os dados para a Barra de Status inferior.
+        Atualiza o plot 2D respeitando as unidades selecionadas.
+        CORRIGIDO: Restaura Snap Points e Status Labels.
         """
+        # --- 1. CAPTURA ESTADO ANTERIOR ---
         prev_xlim = self.ax.get_xlim()
         prev_ylim = self.ax.get_ylim()
         is_subsequent_run = self.base_xlim is not None
 
+        # --- 2. PREPARAÇÃO DE UNIDADES ---
+        len_unit = self.unit_prefs.get('tr', 'mm')
+        
+        def to_user(val_mm):
+            return UnitManager.convert(val_mm, len_unit, 'length_to_mm', reverse=True)
+
+        # Prepara vetores convertidos para plotagem
+        x_conv = [to_user(x) for x in res.contour_x]
+        y_conv = [to_user(y) for y in res.contour_y]
+        tr_conv = to_user(res.throat_radius)
+
+        # --- 3. PLOTAGEM ---
         self.ax.clear()
         
-        # [AJUSTE] Margens limpas. Como o texto saiu, podemos usar margens padrão equilibradas.
         self.fig.subplots_adjust(top=0.92, bottom=0.10, left=0.10, right=0.95)
-
-        # Dados geométricos
-        tr = res.throat_radius
-        nx, ny = res.control_points['N']
-        qx, qy = res.control_points['Q']
-        ex, ey = res.control_points['E']
-        theta_n_deg = res.angles['theta_n']
-
-        # Estilização do Grid e Eixos
         self.ax.grid(True, linestyle='--', alpha=0.2, color='white')
         for spine in self.ax.spines.values(): spine.set_color('#555555')
         self.ax.tick_params(colors='gray', labelsize=9)
-        
-        self.ax.set_title(f"Bell Nozzle Profile (ε={res.epsilon:.2f})", 
-                          color='white', fontsize=11, weight='bold', pad=10)
-        self.ax.set_xlabel("Axial Length (mm)", color='gray')
-        self.ax.set_ylabel("Radius (mm)", color='gray')
 
-        # --- PLOTAGEM DA GEOMETRIA (Mantida) ---
+        self.ax.set_title(f"Bell Nozzle Profile (ε={res.epsilon:.2f})", color='white', fontsize=11, weight='bold', pad=10)
+        self.ax.set_xlabel(f"Axial Length ({len_unit})", color='gray')
+        self.ax.set_ylabel(f"Radius ({len_unit})", color='gray')
+
+        # Geometria
         mask = res.contour_x >= 0
-        div_x = res.contour_x[mask]
-        div_y = res.contour_y[mask]
+        div_x = np.array(x_conv)[mask]
+        div_y = np.array(y_conv)[mask]
         
         self.ax.plot(div_x, div_y, color='#00BCD4', linewidth=2.0, label="Nozzle Wall")
         self.ax.plot(div_x, -div_y, color='#00BCD4', linewidth=2.0)
         self.ax.fill_between(div_x, div_y, -div_y, color='#00BCD4', alpha=0.05)
 
-        # Convergente
+        # Garganta e Convergente
         theta_conv = np.linspace(np.radians(ang_cov), np.radians(-90), 50)
-        xc_conv = 0 + (1.5 * tr) * np.cos(theta_conv)
-        yc_conv = (1.5 * tr + tr) + (1.5 * tr) * np.sin(theta_conv)
+        xc_conv = 0 + (1.5 * tr_conv) * np.cos(theta_conv)
+        yc_conv = (1.5 * tr_conv + tr_conv) + (1.5 * tr_conv) * np.sin(theta_conv)
         self.ax.plot(xc_conv, yc_conv, color='#FF5252', linewidth=1.5, label="Throat Region")
         self.ax.plot(xc_conv, -yc_conv, color='#FF5252', linewidth=1.5)
 
         # Arco Inicial Divergente
+        theta_n_deg = res.angles['theta_n']
         theta_div = np.linspace(np.radians(-90), np.radians(theta_n_deg - 90), 50)
         r_div_rel = 0.382 * res.rounding_factor
-        xc_div = 0 + (r_div_rel * tr) * np.cos(theta_div)
-        yc_div = (r_div_rel * tr + tr) + (r_div_rel * tr) * np.sin(theta_div)
+        xc_div = 0 + (r_div_rel * tr_conv) * np.cos(theta_div)
+        yc_div = (r_div_rel * tr_conv + tr_conv) + (r_div_rel * tr_conv) * np.sin(theta_div)
         self.ax.plot(xc_div, yc_div, color='#FF5252', linewidth=1.5)
         self.ax.plot(xc_div, -yc_div, color='#FF5252', linewidth=1.5)
 
-        # Pontos de Controle
-        self.snap_points = {
-            "N (Inflection)": (nx, ny),
-            "Q (Control)": (qx, qy),
-            "E (Exit)": (ex, ey),
-            "G (Throat)": (0, tr)
-        }
-        self.ax.plot([nx, qx, ex], [ny, qy, ey], color='gray', linestyle=':', linewidth=1, alpha=0.5)
-        self.ax.scatter([nx, qx, ex], [ny, qy, ey], color='#00E676', s=15, zorder=5, label="Control Pts")
-
-        # --- ATUALIZAÇÃO DA BARRA DE STATUS (FORA DO PLOT) ---
+        # Pontos de Controle (Visualização)
+        nx, ny = res.control_points['N']
+        qx, qy = res.control_points['Q']
+        ex, ey = res.control_points['E']
         
-        # 1. Convergência
-        g_x, g_y = 0, tr
+        # Converte para unidade do usuário para plotar corretamente
+        nx_u, ny_u = to_user(nx), to_user(ny)
+        qx_u, qy_u = to_user(qx), to_user(qy)
+        ex_u, ey_u = to_user(ex), to_user(ey)
+        
+        self.ax.plot([nx_u, qx_u, ex_u], [ny_u, qy_u, ey_u], color='gray', linestyle=':', linewidth=1, alpha=0.5)
+        self.ax.scatter([nx_u, qx_u, ex_u], [ny_u, qy_u, ey_u], color='#00E676', s=15, zorder=5, label="Control Pts")
+
+        # --- 4. CORREÇÃO 1: SNAP POINTS (Mouse Grudando) ---
+        # Precisamos popular o dicionário com as coordenadas convertidas
+        self.snap_points = {
+            "N (Inflection)": (nx_u, ny_u),
+            "Q (Control)": (qx_u, qy_u),
+            "E (Exit)": (ex_u, ey_u),
+            "G (Throat)": (0, tr_conv)
+        }
+
+        # --- 5. CORREÇÃO 2: ATUALIZAÇÃO DA STATUS BAR (UI) ---
+        # Lógica de Convergência (Usa dados crus em mm para a lógica matemática)
+        g_x, g_y = 0, res.throat_radius
         cond1 = (nx >= g_x) and (ny >= g_y)
         cond2 = (ex >= qx) and (ey >= qy)
         cond3 = (qy >= ny)
@@ -967,35 +1413,47 @@ class App(ctk.CTk):
             y_ref_at_q = ny + slope_ne * (qx - nx)
             cond4 = qy >= y_ref_at_q
         else: cond4 = False
+        
         is_converged = cond1 and cond2 and cond3 and cond4
 
-        if is_converged:
-            self.lbl_status_sim.configure(text="✔ SIMULATION CONVERGED", text_color="#2ECC71") # Verde
-        else:
-            self.lbl_status_sim.configure(text="✖ DIVERGED / INVALID", text_color="#E74C3C") # Vermelho
+        # Atualiza Label Esquerda (Status da Simulação)
+        if hasattr(self, 'lbl_status_sim'):
+            if is_converged:
+                self.lbl_status_sim.configure(text="✔ SIMULATION CONVERGED", text_color="#2ECC71")
+            else:
+                self.lbl_status_sim.configure(text="✖ DIVERGED / INVALID", text_color="#E74C3C")
 
-        # 2. Risco (deletado)
+        # Atualiza Label Direita (Eficiência)
+        if hasattr(self, 'lbl_status_eff'):
+            eff_val = (res.cf_est / res.cf_ideal) * 100 if res.cf_ideal > 0 else 0.0
+            eff_color = "#2ECC71" if eff_val > 96.0 else ("#F1C40F" if eff_val >= 92.0 else "#E74C3C")
+            self.lbl_status_eff.configure(text=f"Efficiency: {eff_val:.2f}%", text_color=eff_color)
 
-        # 3. Eficiência
-        eff_val = (res.cf_est / res.cf_ideal) * 100 if res.cf_ideal > 0 else 0.0
-        eff_color = "#2ECC71" if eff_val > 96.0 else ("#F1C40F" if eff_val >= 92.0 else "#E74C3C")
-        self.lbl_status_eff.configure(text=f"EFFICIENCY: {eff_val:.2f}%", text_color=eff_color)
+        # --- FIM DAS CORREÇÕES ---
 
-        # --- FIM DA ATUALIZAÇÃO DA BARRA ---
-
-        # Referência Cônica Opcional
         if self.chk_cone_var.get() == 1:
-            cone_l = res.cone_ref_length
-            cone_re = res.exhaust_radius
-            self.ax.plot([0, cone_l], [tr, cone_re], color='gray', linestyle='--', label="Conical Ref.")
+            cone_l = to_user(res.cone_ref_length)
+            cone_re = to_user(res.exhaust_radius)
+            self.ax.plot([0, cone_l], [tr_conv, cone_re], color='gray', linestyle='--', label="Conical Ref.")
             
-        # Linhas do Cursor
         self.cursor_vline = self.ax.axvline(x=0, visible=False, color='white', linestyle='-', linewidth=0.8)
         self.cursor_hline = self.ax.axhline(y=0, visible=False, color='white', linestyle='-', linewidth=0.8)
         self.cursor_text = self.ax.text(0, 0, "", visible=False, color='#00FF00', weight='bold', fontsize=8)
 
         self.ax.set_aspect('equal')
-        self.ax.legend(loc='lower right', facecolor='#2B2B2B', edgecolor='#444', labelcolor='gray', fontsize=8)
+        self.ax.legend(loc='upper left', facecolor='#2B2B2B', edgecolor='#444', labelcolor='gray', fontsize=8)
+
+        # Info Box
+        theta_e_deg = res.angles['theta_e']
+        angle_info = (f"INFLECTION & EXIT ANGLES\n"
+                      f"θn: {theta_n_deg:.3f}°\n"
+                      f"θe: {theta_e_deg:.3f}°")
+        
+        self.ax.text(0.02, 0.04, angle_info, 
+                     transform=self.ax.transAxes,
+                     ha='left', va='bottom',
+                     color='orange', fontsize=9, fontfamily='monospace', weight='bold',
+                     bbox=dict(boxstyle="round,pad=0.4", fc="#2B2B2B", ec="#444", alpha=0.9))
 
         self.canvas.draw()
         
@@ -1006,6 +1464,52 @@ class App(ctk.CTk):
             self.ax.set_xlim(prev_xlim)
             self.ax.set_ylim(prev_ylim)
             self.canvas.draw()
+
+    def _update_separation_status_ui(self, result):
+        """
+        Atualiza a label de risco na barra de status principal com base
+        nos resultados da análise de separação de Schmucker.
+        """
+        status_text = ""
+        status_color = ""
+
+        # 1. Verifica Avisos Geométricos (Prioridade Máxima)
+        if hasattr(result, 'geometric_warnings') and result.geometric_warnings:
+            # Verifica se é Quina (Discontinuity) ou Garganta (Critical)
+            is_kink = any("DISCONTINUITY" in w for w in result.geometric_warnings)
+            is_throat = any("CRITICAL" in w for w in result.geometric_warnings)
+            
+            if is_kink:
+                status_text = "✖ GEOMETRY DISCONTINUITY*"
+                status_color = "#E74C3C" # Vermelho
+            elif is_throat:
+                status_text = "⚠ SHARP THROAT: FLOW MAY DETACH*"
+                status_color = "#F1C40F" # Amarelo (Aviso)
+            else:
+                status_text = "⚠ GEOMETRY WARNING*"
+                status_color = "#F1C40F"
+
+        # 2. Verifica Descolamento por Pressão (Física)
+        elif result.has_separation:
+            status_text = "✖ FLOW SEPARATION DETECTED*"
+            status_color = "#E74C3C" # Vermelho
+
+        # 3. Verifica Margem de Segurança (Para ficar amarelo se estiver quase descolando)
+        elif result.safety_margin < 0.20: # Menos de 20% de margem
+            margin_pct = result.safety_margin * 100
+            status_text = f"⚠ LOW STABILITY MARGIN* ({margin_pct:.1f}%)"
+            status_color = "#F1C40F" # Amarelo
+
+        # 4. Tudo Verde (Sucesso)
+        else:
+            margin_pct = result.safety_margin * 100
+            status_text = f"✔ FLOW ATTACHED* (Margin: {margin_pct:.0f}%)"
+            status_color = "#2ECC71" # Verde Neon
+
+        # Aplica na Label da Aba Principal (Barra de Status)
+        # Verifica se a label existe antes de tentar configurar (segurança)
+        if hasattr(self, 'lbl_status_risk'):
+            self.lbl_status_risk.configure(text=status_text, text_color=status_color)
 
     def on_scroll(self, event):
         if event.inaxes != self.ax: return
@@ -1063,11 +1567,11 @@ class App(ctk.CTk):
 
         if closest_point:
             name, tx, ty = closest_point
-            text_str = f"{name}\nX: {tx:.2f}\nY: {ty:.2f}"
+            text_str = f"{name}\nX: {tx:.3f}\nY: {ty:.3f}"
             color, style = '#FFFF00', '--'
             dx, dy = tx, ty
         else:
-            text_str = f"X: {x:.2f}\nY: {y:.2f}"
+            text_str = f"X: {x:.3f}\nY: {y:.3f}"
             color, style = '#00FF00', '-'
             dx, dy = x, y
 
@@ -1140,10 +1644,17 @@ class App(ctk.CTk):
             pa_atm = float(pa_str)
             pa_pascal = pa_atm * 101325  # atm -> Pa
 
-            pc_mpa = float(self.inputs['pc'].get())
+            # --- CORREÇÃO AQUI ---
+            pc_mpa = self._get_converted_value('pc') # Garante que está em MPa
             pc_pascal = pc_mpa * 1e6     # MPa -> Pa
             
             gamma = float(self.inputs['k'].get())
+
+            sim_input = SimulationInput(
+                chamber_pressure=pc_pascal,
+                ambient_pressure=pa_pascal,
+                gamma=gamma
+            )
 
         except ValueError:
             tk.messagebox.showerror("Input Error", "Invalid number format. Use points (.) for decimals.")
@@ -1217,120 +1728,88 @@ class App(ctk.CTk):
         if not self.last_result: return
 
         try:
-            # 1. Coleta Inputs
-            pa_val = float(self.entry_pa.get())
-            pc_val = float(self.inputs['pc'].get()) * 1e6 
+            # --- 1. PREPARAÇÃO DO INPUT (Convertendo TUDO para SI/Base) ---
+            
+            # A. Pressão Ambiente: Input do Usuário -> Pascal
+            pa_raw = float(self.entry_pa.get())
+            pa_unit_user = self.unit_prefs.get('pa', 'Pa')
+            # Usa pressure_to_mpa para ir até MPa, depois * 1e6 para Pa
+            # Se o usuário escolheu 'atm', convert -> converte para MPa -> converte para Pa
+            pa_mpa = UnitManager.convert(pa_raw, pa_unit_user, 'pressure_to_mpa', reverse=False)
+            pa_val_si = pa_mpa * 1e6 # Pascal
+            
+            # B. Pressão da Câmara: Unidade Salva -> Pascal
+            pc_mpa = self._get_converted_value('pc') 
+            pc_val_si = pc_mpa * 1e6 
+            
             gamma = float(self.inputs['k'].get())
             
-            # 2. Roda Simulação
-            sim_input = SimulationInput(chamber_pressure=pc_val, ambient_pressure=pa_val, gamma=gamma)
+            # --- 2. CÁLCULO FÍSICO (Sempre em SI) ---
+            sim_input = SimulationInput(chamber_pressure=pc_val_si, ambient_pressure=pa_val_si, gamma=gamma)
             sim = FlowSimulation(self.last_result, sim_input)
             result = sim.run()
             
-            # 3. Setup do Canvas
+            # --- 3. PREPARAÇÃO DO PLOT (Convertendo SI -> Unidade do Usuário) ---
+            
+            # Identifica unidades de destino
+            len_unit = self.unit_prefs.get('tr', 'mm')  # Comprimento (ex: in)
+            press_unit = self.unit_prefs.get('pe', 'atm') # Pressão Y (ex: psi) - Usamos a de Exhaust como referência visual
+            
+            # Helpers de Conversão de Saída
+            def conv_len(val_m): 
+                # Metro -> mm (*1000) -> Unidade Usuário (reverse=True)
+                val_mm = val_m * 1000
+                return UnitManager.convert(val_mm, len_unit, 'length_to_mm', reverse=True)
+            
+            def conv_press(val_pa):
+                # Pascal -> MPa (/1e6) -> Unidade Usuário (reverse=True)
+                val_mpa = val_pa / 1e6
+                return UnitManager.convert(val_mpa, press_unit, 'pressure_to_mpa', reverse=True)
+
+            # Vetores Convertidos
+            x_plot = [conv_len(x) for x in result.axis_x]
+            p_wall_plot = [conv_press(p) for p in result.wall_pressure]
+            p_limit_plot = [conv_press(p) for p in result.schmucker_limit]
+            pa_line_val = conv_press(pa_val_si)
+
+            # --- 4. PLOTAGEM ---
             self.ax_sep.clear()
             self.ax_sep.grid(True, linestyle='--', alpha=0.3, color='white')
-            for spine in self.ax_sep.spines.values(): spine.set_color('white')
             self.ax_sep.tick_params(colors='white')
             
-            self.ax_sep.set_title("Flow Separation Check (Schmucker Criterion)", color='white', weight='bold')
-            self.ax_sep.set_xlabel("Axial Length (m)", color='white')
-            self.ax_sep.set_ylabel("Pressure (Pa)", color='white')
+            # Labels com Unidades
+            self.ax_sep.set_title("Flow Separation Check", color='white', weight='bold')
+            self.ax_sep.set_xlabel(f"Axial Length ({len_unit})", color='white')
+            self.ax_sep.set_ylabel(f"Pressure ({press_unit})", color='white')
 
-            x = result.axis_x
-            p_wall = result.wall_pressure
-            p_limit = result.schmucker_limit
+            self.ax_sep.plot(x_plot, p_wall_plot, label='Wall Pressure', color='#3498DB', linewidth=2)
+            self.ax_sep.plot(x_plot, p_limit_plot, label='Separation Limit', color='#E74C3C', linestyle='--', linewidth=2)
+            self.ax_sep.axhline(y=pa_line_val, color='gray', linestyle=':', label=f'Ambient ({pa_unit_user})')
 
-            self.ax_sep.plot(x, p_wall, label='Wall Pressure', color='#3498DB', linewidth=2)
-            self.ax_sep.plot(x, p_limit, label='Separation Limit', color='#E74C3C', linestyle='--', linewidth=2)
-            self.ax_sep.axhline(y=pa_val, color='gray', linestyle=':', label='Ambient P')
+            # Log Scale se necessário (Baseado no valor visual plotado)
+            # Se estivermos plotando em atm/bar/MPa, valores < 0.01 podem pedir log
+            if pa_line_val < 0.01 and press_unit in ['MPa', 'atm', 'bar']: 
+                 self.ax_sep.set_yscale('log')
+            elif pa_line_val < 1000 and press_unit == 'Pa':
+                 self.ax_sep.set_yscale('log')
 
-            if pa_val < 1000: self.ax_sep.set_yscale('log')
-
-            # --- CORREÇÃO AQUI ---
-            # Verifica AVISOS GEOMÉTRICOS antes
-            if hasattr(result, 'geometric_warnings') and result.geometric_warnings:
-                warn_msg = "\n".join(result.geometric_warnings)
-                self.ax_sep.text(0.5, 0.5, f"GEOMETRY WARNING\n{warn_msg}", 
-                                 transform=self.ax_sep.transAxes, ha='center', va='center',
-                                 color='white', weight='bold', fontsize=12,
-                                 bbox=dict(boxstyle="round,pad=1", fc="#C0392B", ec="white", alpha=0.9))
+            # Marcador de Separação (Se houver)
+            if result.has_separation and result.separation_x is not None:
+                sx_conv = conv_len(result.separation_x)
+                sp_conv = conv_press(result.separation_pressure)
                 
-                self.ax_sep.set_title("Flow Separation Check (Schmucker Criterion) [DANGEROUS GEOMETRY]", color="#E74C3C", weight='bold')
-
-            # Lógica Visual de Descolamento
-            if result.has_separation:
-                # CORREÇÃO CRÍTICA: Só tenta plotar o marcador se existirem coordenadas numéricas.
-                # Se for apenas um erro geométrico, sx e sp serão None.
-                if result.separation_x is not None and result.separation_pressure is not None:
-                    sx, sp = result.separation_x, result.separation_pressure
-                    
-                    self.ax_sep.scatter([sx], [sp], color='#E74C3C', s=100, zorder=10, marker='X')
-                    
-                    self.ax_sep.annotate(f'SEPARATION\nX={sx:.3f}m', (sx, sp), 
-                                         xytext=(0, 20), textcoords='offset points', ha='center',
-                                         color='#E74C3C', weight='bold',
-                                         bbox=dict(boxstyle="round,pad=0.2", fc="#2B2B2B", ec="#E74C3C"))
-                    
-                    mask = x >= sx
-                    if np.any(mask):
-                        self.ax_sep.fill_between(x[mask], p_wall[mask], p_limit[mask], color='#E74C3C', alpha=0.2)
-                
-                # Se não tiver coordenadas (apenas erro geométrico), não faz nada aqui 
-                # (o texto gigante GEOMETRY ERROR já foi plotado acima).
-
-            elif not result.geometric_warnings:
-                # Texto de Sucesso
-                margin = result.safety_margin * 100
-                self.ax_sep.text(0.5, 0.95, f"FLOW ATTACHED (Margin: {margin:.1f}%)", 
-                                 transform=self.ax_sep.transAxes, ha='center', va='top',
-                                 color='#2ECC71', weight='bold',
-                                 bbox=dict(boxstyle="round", fc="#2B2B2B", ec="#2ECC71"))
-
+                self.ax_sep.scatter([sx_conv], [sp_conv], color='#E74C3C', s=100, zorder=10, marker='X')
+                self.ax_sep.annotate(f'SEPARATION\nX={sx_conv:.3f}{len_unit}', (sx_conv, sp_conv), 
+                                     xytext=(0, 20), textcoords='offset points', ha='center',
+                                     color='#E74C3C', weight='bold',
+                                     bbox=dict(boxstyle="round,pad=0.2", fc="#2B2B2B", ec="#E74C3C"))
+            
+            # Legenda e Redraw
             self.ax_sep.legend(facecolor='#2B2B2B', labelcolor='white')
             self.canvas_sep.draw()
-
-        # --- ATUALIZAÇÃO DA BARRA DE STATUS (ABA 2D PRINCIPAL) ---
-            # Aqui conectamos a física (Schmucker) com a UI principal
             
-            status_text = ""
-            status_color = ""
-
-            # 1. Verifica Avisos Geométricos (Prioridade Máxima)
-            if result.geometric_warnings:
-                # Verifica se é Quina (Discontinuity) ou Garganta (Critical)
-                is_kink = any("DISCONTINUITY" in w for w in result.geometric_warnings)
-                is_throat = any("CRITICAL" in w for w in result.geometric_warnings)
-                
-                if is_kink:
-                    status_text = "✖ GEOMETRY DISCONTINUITY*"
-                    status_color = "#E74C3C" # Vermelho
-                elif is_throat:
-                    status_text = "⚠ SHARP THROAT: FLOW MAY DETACH*"
-                    status_color = "#F1C40F" # Amarelo (Aviso)
-                else:
-                    status_text = "⚠ GEOMETRY WARNING*"
-                    status_color = "#F1C40F"
-
-            # 2. Verifica Descolamento por Pressão (Física)
-            elif result.has_separation:
-                status_text = "✖ FLOW SEPARATION DETECTED*"
-                status_color = "#E74C3C" # Vermelho
-
-            # 3. Verifica Margem de Segurança (Para ficar amarelo se estiver quase descolando)
-            elif result.safety_margin < 0.20: # Menos de 20% de margem
-                margin_pct = result.safety_margin * 100
-                status_text = f"⚠ LOW STABILITY MARGIN* ({margin_pct:.1f}%)"
-                status_color = "#F1C40F" # Amarelo
-
-            # 4. Tudo Verde
-            else:
-                margin_pct = result.safety_margin * 100
-                status_text = f"✔ FLOW ATTACHED* (Margin: {margin_pct:.0f}%)"
-                status_color = "#2ECC71" # Verde Neon
-
-            # Aplica na Label da Aba Principal
-            self.lbl_status_risk.configure(text=status_text, text_color=status_color)
+            # Atualiza Status Bar (A mesma lógica de antes, não muda pois depende do objeto `result` físico)
+            self._update_separation_status_ui(result)
 
         except Exception as e:
             import traceback

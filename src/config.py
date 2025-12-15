@@ -3,7 +3,7 @@ import os
 import sys
 
 # Esta variável será atualizada pelo seu script release.py
-CURRENT_VERSION = "3.4.7"
+CURRENT_VERSION = "3.4.8"
 
 # Dados de Propelentes (Global)
 PROPELLANTS = {
