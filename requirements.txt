@@ -1,0 +1,7 @@
+customtkinter
+numpy
+matplotlib
+requests
+packaging
+Pillow
+pyinstaller

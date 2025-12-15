@@ -1,0 +1,44 @@
+name: Build and Release NozzleCalc
+
+# O robô entra em ação apenas quando você cria uma Tag começando com 'v' (ex: v3.6.0)
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: 📥 Baixando o código
+      uses: actions/checkout@v3
+
+    - name: 🐍 Configurando Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11' # Versão estável para PyInstaller
+
+    - name: 📦 Instalando Dependências
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 🔨 Criando Executável (PyInstaller)
+      # Aqui usamos o seu comando exato, adaptado para rodar no servidor
+      run: |
+        pyinstaller --noconsole --onefile --name="NozzleCalc" --icon="icon3.ico" --collect-all customtkinter --add-data "icon3.ico;." main.py
+
+    - name: 🚀 Publicando Release no GitHub
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: dist/NozzleCalc.exe
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
