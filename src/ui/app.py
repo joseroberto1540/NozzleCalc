@@ -100,7 +100,7 @@ class App(ctk.CTk):
         # Mapeia nome -> CLASSE (não instancie aqui com ())
         self.available_solvers = {
             "Adapted Rao Method Solver (Rao)": BellNozzleSolver,
-            # "Method of Characteristics Solver (MOC)": MOCSolver
+            "Method of Characteristics Solver (MOC)": MOCSolver
         } #easyfind
         
         self.current_solver_name = "Adapted Rao Method Solver (Rao)"
@@ -545,37 +545,102 @@ class App(ctk.CTk):
                 ctk.CTkLabel(win, text=txt).grid(row=r_idx+1, column=c_idx, padx=15, pady=5)
 
     def get_file_types(self):
-        return [("Nozzle Project Files", "*.json"), ("All Files", "*.*")]
+        return [
+            ("NozzleCalc Project", "*.nzl"),
+            ("JSON Project (Legacy)", "*.json"),
+            ("All Files", "*.*")
+        ]
 
     def open_project(self):
         file_path = filedialog.askopenfilename(filetypes=self.get_file_types())
         if not file_path: return
+        
         try:
-            with open(file_path, 'r') as f: data = json.load(f)
+            with open(file_path, 'r', encoding='utf-8') as f: 
+                data = json.load(f)
+            
+            # --- 1. VALIDAÇÃO DE TIPO ---
+            if "file_type" in data and data["file_type"] != "nozzle_calc_project":
+                raise ValueError("This file is not a valid NozzleCalc project.")
+
+            # --- 2. VALIDAÇÃO DE VERSÃO (NOVO) ---
+            file_ver_str = data.get("version", "0.0.0") # Se não tiver versão, assume antiga
+            
+            # Precisamos converter para objeto Version para comparar (ex: 1.10 > 1.9)
+            # Se der erro no parse, assumimos versão 0
+            try:
+                v_file = version.parse(file_ver_str)
+                v_app = version.parse(CURRENT_VERSION)
+            except:
+                v_file = version.parse("0.0.0")
+                v_app = version.parse(CURRENT_VERSION)
+
+            # CASO A: Arquivo criado numa versão MAIS NOVA que o App (Perigo!)
+            if v_file > v_app:
+                msg = (f"This file was saved in a newer version of NozzleCalc ({file_ver_str}).\n"
+                       f"You are using version {CURRENT_VERSION}.\n\n"
+                       "Some features or data may be lost if you open and save it.\n"
+                       "Do you want to proceed?")
+                if not tk.messagebox.askyesno("Version Mismatch", msg, icon='warning'):
+                    return # Cancela a abertura
+
+            # CASO B: Arquivo muito antigo (Migração)
+            # Aqui você pode colocar lógica futura. Por enquanto, só avisamos se for muito drástico.
+            # if v_file < version.parse("2.0.0"): ... 
+
+            # --- 3. RESTAURAÇÃO DE DADOS (Mantém igual) ---
+            
+            # Restaura Solver
+            if "solver" in data:
+                saved_solver = data["solver"]
+                if saved_solver in self.available_solvers:
+                    self.solver_menu.set(saved_solver)
+                    self.change_solver(saved_solver)
+            
+            # Restaura Propelente
             if "propellant" in data:
                 self.prop_menu.set(data["propellant"])
                 self.set_propellant(data["propellant"])
+            
+            # Restaura Inputs
             for key, value in data.items():
                 if key in self.inputs:
-                    original_state = self.inputs[key].cget("state")
+                    entry = self.inputs[key]
+                    original_state = entry.cget("state")
+                    
+                    # Log de migração silenciosa:
+                    # Se você renomeou uma variável no código, aqui você faria:
+                    # if key == "old_name": self.inputs["new_name"].insert(0, value)
+
                     if original_state == "disabled":
-                        self.inputs[key].configure(state="normal")
-                        self.inputs[key].delete(0, tk.END)
-                        self.inputs[key].insert(0, str(value))
-                        self.inputs[key].configure(state="disabled")
+                        entry.configure(state="normal")
+                        entry.delete(0, tk.END)
+                        entry.insert(0, str(value))
+                        entry.configure(state="disabled")
                     else:
-                        self.inputs[key].delete(0, tk.END)
-                        self.inputs[key].insert(0, str(value))
+                        entry.delete(0, tk.END)
+                        entry.insert(0, str(value))
+            
             self.current_file_path = file_path
+            filename = os.path.basename(file_path)
+            self.title(f"NozzleCalc {CURRENT_VERSION} - [{filename}]")
+            
             self.run_simulation()
-        except Exception as e: tk.messagebox.showerror("Error", str(e))
+            
+        except json.JSONDecodeError:
+            tk.messagebox.showerror("Error", "File corrupted or invalid format.")
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"Failed to open file:\n{e}")
 
     def save_project(self):
         if self.current_file_path: self._write_to_file(self.current_file_path)
         else: self.save_project_as()
 
     def save_project_as(self):
-        file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=self.get_file_types())
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".nzl", 
+            filetypes=self.get_file_types()
+        )
         if file_path:
             self.current_file_path = file_path
             self._write_to_file(file_path)
@@ -623,6 +688,12 @@ class App(ctk.CTk):
         try:
             data = {key: entry.get() for key, entry in self.inputs.items()}
             data["propellant"] = self.prop_menu.get()
+            data["solver"] = self.current_solver_name
+
+            # --- ASSINATURA DO ARQUIVO ---
+            data["file_type"] = "nozzle_calc_project"
+            data["version"] = CURRENT_VERSION
+
             with open(path, 'w') as f: json.dump(data, f, indent=4)
             tk.messagebox.showinfo("Saved", "Project saved successfully!")
         except Exception as e: tk.messagebox.showerror("Error", str(e))
