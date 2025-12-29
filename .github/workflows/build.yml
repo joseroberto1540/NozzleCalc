@@ -1,6 +1,5 @@
 name: Build and Release NozzleCalc
 
-# O robô entra em ação apenas quando você cria uma Tag começando com 'v' (ex: v3.6.0)
 on:
   push:
     tags:
@@ -20,7 +19,7 @@ jobs:
     - name: 🐍 Configurando Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11' # Versão estável para PyInstaller
+        python-version: '3.11'
 
     - name: 📦 Instalando Dependências
       run: |
@@ -28,7 +27,6 @@ jobs:
         pip install -r requirements.txt
 
     - name: 🔨 Criando Executável (PyInstaller)
-      # Aqui usamos o seu comando exato, adaptado para rodar no servidor
       run: |
         pyinstaller --noconsole --onefile --name="NozzleCalc" --icon="icon3.ico" --collect-all customtkinter --add-data "icon3.ico;." --hidden-import=ezdxf main.py
 

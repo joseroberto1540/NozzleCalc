@@ -1,10 +1,4 @@
 class UnitManager:
-    """Gerencia conversões e fatores de escala."""
-    
-    # Fatores para converter DA unidade X PARA a unidade base do Solver
-    # Base Length: mm
-    # Base Pressure (Chamber): MPa
-    # Base Pressure (Exhaust): atm
     
     CONVERTERS = {
         'length_to_mm': {
@@ -20,10 +14,6 @@ class UnitManager:
 
     @staticmethod
     def convert(value: float, from_unit: str, category: str, reverse: bool = False) -> float:
-        """
-        category: 'length_to_mm', 'pressure_to_mpa', etc.
-        reverse: Se True, converte DA base PARA a unidade de exibição (usado na UI).
-        """
         factor = UnitManager.CONVERTERS[category].get(from_unit, 1.0)
         if reverse:
             return value / factor

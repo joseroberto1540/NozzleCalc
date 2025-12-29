@@ -2,10 +2,8 @@
 import os
 import sys
 
-# Esta variável será atualizada pelo seu script release.py
-CURRENT_VERSION = "3.4.11"
+CURRENT_VERSION = "3.4.12"
 
-# Dados de Propelentes (Global)
 PROPELLANTS = {
     "Custom / Outro": None,
     "KNDX / KNSu (Sugar)": 1.137,
@@ -19,9 +17,8 @@ PROPELLANTS = {
 }
 
 def resource_path(relative_path: str) -> str:
-    """Obtém o caminho absoluto para recursos (funciona no PyInstaller)."""
     try:
-        base_path = sys._MEIPASS # type: ignore
+        base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
