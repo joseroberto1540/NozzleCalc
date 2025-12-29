@@ -17,31 +17,20 @@ from typing import Tuple, Dict, Any, Optional
 from PIL import Image, ImageTk
 import ezdxf
 from ezdxf import units
-
 import customtkinter as ctk
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from mpl_toolkits.mplot3d import Axes3D
-
 from src.simulation.separation import FlowSimulation, SimulationInput
-
-# IMPORTAÇÕES LOCAIS
 from src.config import CURRENT_VERSION, PROPELLANTS, resource_path
 from src.core.solvers.bell_nozzle import BellNozzleSolver
 from src.core.solvers.bell_nozzle import BellNozzleSolver
 from src.core.solvers.moc_solver import MOCSolver
-
 from src.core.models import NozzleResult
 
 class UnitManager:
-    """Gerencia conversões e fatores de escala."""
-    
-    # Fatores para converter DA unidade X PARA a unidade base do Solver
-    # Base Length: mm
-    # Base Pressure (Chamber): MPa
-    # Base Pressure (Exhaust): atm
-    
+
     CONVERTERS = {
         'length_to_mm': {
             'mm': 1.0, 
@@ -60,11 +49,6 @@ class UnitManager:
 
     @staticmethod
     def convert(value: float, from_unit: str, category: str, reverse: bool = False) -> float:
-        """
-        category: 'length_to_mm', 'pressure_to_mpa', etc.
-        reverse: Se True, converte DA base PARA a unidade de exibição (usado na UI).
-        """
-        # Proteção contra unidade vazia ou inválida
         if not from_unit or from_unit not in UnitManager.CONVERTERS.get(category, {}):
             return value
 
@@ -75,9 +59,6 @@ class UnitManager:
         return value * factor
 
 class ToolTip:
-    """
-    Cria um tooltip (texto flutuante) para qualquer widget ctk/tk.
-    """
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
@@ -85,14 +66,12 @@ class ToolTip:
         self.id = None
         self.x = self.y = 0
 
-        # Eventos para mostrar/esconder
         self.widget.bind("<Enter>", self.schedule_show)
         self.widget.bind("<Leave>", self.hide_tip)
         self.widget.bind("<ButtonPress>", self.hide_tip)
 
     def schedule_show(self, event=None):
         self.unschedule()
-        # Pequeno delay de 500ms para não ficar piscando se passar o mouse rápido
         self.id = self.widget.after(500, self.show_tip)
 
     def unschedule(self):
@@ -107,10 +86,8 @@ class ToolTip:
         y = y + self.widget.winfo_rooty() + 35
         
         self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True) # Remove barra de título
+        tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
-        
-        # Estilo do Tooltip (Dark Mode)
         label = tk.Label(tw, text=self.text, justify='left',
                          background="#1A1A1A", fg="#E0E0E0",
                          relief='solid', borderwidth=1,
@@ -139,14 +116,12 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        # Mapeia nome -> CLASSE (não instancie aqui com ())
         self.available_solvers = {
             "Adapted Rao Method Solver (Rao)": BellNozzleSolver,
-            "Method of Characteristics Solver (MOC)": MOCSolver
-        } #easyfind
+            # "Method of Characteristics Solver (MOC)": MOCSolver
+        } #easyfind to edit the moc solver avaibility, if U are a editor, let it commented untill the creator share, results still not reliable
         
-        self.current_solver_name = "Adapted Rao Method Solver (Rao)"
-        # Instancia o padrão
+        self.current_solver_name = "Adapted Rao Method Solver (Rao)" #standard solver
         self.calculator = self.available_solvers[self.current_solver_name]()
         self.last_result = None
         self.last_input_ang_cov = -135
@@ -172,37 +147,28 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.bind('<Return>', lambda event: self.run_simulation())
         
-        # --- NOVO LAYOUT DE GRID ---
-        # Row 0: Menu Bar Global (File, Tools...)
-        # Row 1: Conteúdo Principal (Sidebar + Main Area)
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=0)  # Menu Bar não estica
-        self.grid_rowconfigure(1, weight=1)  # Conteúdo estica
+        self.grid_rowconfigure(0, weight=0) 
+        self.grid_rowconfigure(1, weight=1) 
         
         self.inputs = {}
         
-        # --- ESTADO DE PREFERÊNCIAS ---
-        # Define as unidades padrão iniciais (Base do Solver)
         self.unit_prefs = {
-            'tr': 'mm',   # Throat Radius
-            'pc': 'MPa',  # Chamber Pressure
-            'pe': 'atm'   # Exhaust Pressure
+            'tr': 'mm',   
+            'pc': 'MPa', 
+            'pe': 'atm'  
         }
         
-        # Mapeia qual categoria de conversão cada input usa
         self.unit_categories = {
             'tr': 'length_to_mm',
             'pc': 'pressure_to_mpa',
             'pe': 'pressure_to_atm'
         }
         
-        # Armazena referências para atualizar textos das labels depois
         self.input_labels: Dict[str, ctk.CTkLabel] = {}
 
-        # 1. Cria a Barra de Menu Global (Topo Absoluto)
         self._create_menubar()
         
-        # 2. Cria as áreas principais (deslocadas para Row 1)
         self._create_sidebar()
         self._create_main_area()
         
@@ -218,7 +184,6 @@ class App(ctk.CTk):
         
         self.after(2000, self.check_for_updates)
 
-        # Atalhos de Teclado (Hotkeys)
         self.bind('<Control-s>', lambda event: self.save_project())
         self.bind('<Control-o>', lambda event: self.open_project())
         self.bind('<Control-r>', lambda event: self.run_simulation())
@@ -229,11 +194,9 @@ class App(ctk.CTk):
         Cria a barra de menu superior global (File, Tools, etc).
         Estilo flat e minimalista.
         """
-        # Frame que ocupa toda a largura (columnspan=2) na row=0
         self.menubar_frame = ctk.CTkFrame(self, height=28, corner_radius=0, fg_color="#1e1e1e")
         self.menubar_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
         
-        # Configuração comum para botões de menu (parecem texto até passar o mouse)
         menu_btn_config = {
             "width": 50, 
             "height": 28,
@@ -243,14 +206,14 @@ class App(ctk.CTk):
             "anchor": "w"
         }
 
-        # --- BOTÃO FILE ---
+        # file button
         self.btn_menu_file = ctk.CTkButton(self.menubar_frame, text="File", command=self._post_file_menu, **menu_btn_config)
         self.btn_menu_file.pack(side="left", padx=2)
 
         self.btn_menu_edit = ctk.CTkButton(self.menubar_frame, text="Edit", command=self._post_edit_menu, **menu_btn_config)
         self.btn_menu_edit.pack(side="left", padx=2)
 
-        # --- BOTÃO TOOLS ---
+        # tools button
         self.btn_menu_tools = ctk.CTkButton(self.menubar_frame, text="Tools", command=self._post_tools_menu, **menu_btn_config)
         self.btn_menu_tools.pack(side="left", padx=2)
 
@@ -258,7 +221,7 @@ class App(ctk.CTk):
         """Menu dropdown para Edit"""
         menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#404040", activeforeground="white", borderwidth=0)
         
-        # Opção Preferences
+        # preferences
         menu.add_command(label="    Preferences...", command=self.open_preferences)
         
         try:
@@ -272,7 +235,6 @@ class App(ctk.CTk):
         """
         Exibe o menu File com o submenu 'Export Geometry' em cascata.
         """
-        # Configuração visual do menu (Dark Theme)
         menu_style = {
             "tearoff": 0,
             "bg": "#2b2b2b",
@@ -280,32 +242,26 @@ class App(ctk.CTk):
             "activebackground": "#404040",
             "activeforeground": "white",
             "borderwidth": 0,
-            "font": ("Segoe UI", 9) # Fonte padrão do sistema fica mais limpa
+            "font": ("Segoe UI", 9)
         }
 
-        # 1. Menu Principal (File)
         menu = tk.Menu(self, **menu_style)
-        
-        # Itens Principais
+    
         menu.add_command(label="    Open Project...      (Ctrl+O)", command=self.open_project)
         menu.add_command(label="    Save Project           (Ctrl+S)", command=self.save_project)
         menu.add_command(label="    Save As...", command=self.save_project_as)
         menu.add_separator()
 
-        # 2. Submenu de Exportação (O "Menu Lateral")
         export_menu = tk.Menu(menu, **menu_style)
         
-        # Adiciona as opções específicas ao submenu
         export_menu.add_command(label="    To DXF (CAD / Fusion 360)...", command=self.export_dxf_only)
         export_menu.add_command(label="    To CSV (Excel / Points)...", command=self.export_csv_only)
 
-        # 3. Anexa o submenu ao menu File usando 'add_cascade'
         menu.add_cascade(label="    Export Geometry", menu=export_menu)
 
         menu.add_separator()
         menu.add_command(label="    Exit", command=self.on_closing)
         
-        # Posicionamento do popup
         try:
             x = self.btn_menu_file.winfo_rootx()
             y = self.btn_menu_file.winfo_rooty() + self.btn_menu_file.winfo_height()
@@ -318,7 +274,6 @@ class App(ctk.CTk):
         menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#404040", activeforeground="white", borderwidth=0)
         
         menu.add_command(label="    Flow Properties Table", command=self.open_flow_properties)
-        # Futuramente: menu.add_command(label="    Unit Converter", command=...)
         
         try:
             x = self.btn_menu_tools.winfo_rootx()
@@ -328,7 +283,7 @@ class App(ctk.CTk):
             menu.grab_release()
     
     def _set_input_state(self, key: str, state: str):
-        """Altera visualmente o estado de um input (normal vs disabled)."""
+        # this is used to disable inputs when the solver dont need them
         if key not in self.inputs: return
         
         entry = self.inputs[key]
@@ -344,43 +299,32 @@ class App(ctk.CTk):
                             text_color=self.COLOR_NORMAL_TEXT)
 
     def _setup_sensitivity_plot(self):
-        """
-        Cria (ou recria) o widget FigureCanvasTkAgg dentro da aba de sensibilidade.
-        Isso é necessário porque quando deletamos a aba, o canvas antigo morre.
-        """
-        # Verifica se a aba existe
+
         try:
-            # Obtém a referência ATUAL do frame da aba (pode ter mudado após delete/insert)
+            
             tab_frame = self.tabview.tab("Sensitivity Analysis")
         except Exception:
-            return # Aba não existe, não faz nada
+            return 
 
-        # 1. Limpeza: Remove widgets antigos se houver (para não empilhar gráficos)
         for widget in tab_frame.winfo_children():
             widget.destroy()
 
-        # 2. Recriação: Cria um NOVO Canvas Tkinter, mas usa a FIGURA MATPLOTLIB EXISTENTE
-        # Nota: self.fig_sens é persistente (criado no __init__), então o gráfico antigo reaparece
-        self.canvas_sens = FigureCanvasTkAgg(self.fig_sens, master=tab_frame)
-        self.canvas_sens.draw() # Força o desenho imediato
+        self.canvas_sens.draw()
         
-        # 3. Empacotamento
         self.canvas_sens.get_tk_widget().pack(fill="both", expand=True)
         
-        # 4. Reconecta eventos (o canvas antigo levou os eventos com ele)
         self.canvas_sens.mpl_connect('motion_notify_event', self.on_mouse_move_sens)
 
     def _create_sidebar(self):
-        # Mantenha a criação do frame e dos inputs como estava...
         self.sidebar = ctk.CTkScrollableFrame(self, width=300, corner_radius=0)
         self.sidebar.configure(fg_color="transparent")
-        self.sidebar.grid(row=1, column=0, sticky="nsew") # <--- ALTERADO PARA ROW 1
+        self.sidebar.grid(row=1, column=0, sticky="nsew")
 
         self.lbl_title = ctk.CTkLabel(self.sidebar, text="Input Parameters", 
                                       font=ctk.CTkFont(size=20, weight="bold"))
         self.lbl_title.pack(pady=(20, 10), padx=10)
         
-        # --- SELEÇÃO DE SOLVER ---
+        # solver selection
         lbl_solver = ctk.CTkLabel(self.sidebar, text="Solver Algorithm", anchor="w")
         lbl_solver.pack(fill="x", padx=20, pady=(5, 0))
 
@@ -390,7 +334,7 @@ class App(ctk.CTk):
         
         ctk.CTkFrame(self.sidebar, height=2, fg_color="gray30").pack(fill="x", padx=20, pady=5)
         
-        # --- INPUTS (Mantenha seus inputs normais aqui) ---
+        # inputs
         self._add_input("tr", "Throat Radius", "13.5")
         
         lbl_prop = ctk.CTkLabel(self.sidebar, text="Propellant Preset", anchor="w")
@@ -403,7 +347,7 @@ class App(ctk.CTk):
         self._add_input("pc", "Chamber Pressure", "5.0")
         self._add_input("pe", "Exhaust Pressure", "1.5")
         self._add_input("ang_div", "Divergent Angle (deg)", "15") 
-        self._add_input("ang_cov", "Convergent Angle (deg)", "-135")
+        self._add_input("ang_cov", "Convergent Angle (deg)", "45")
         self._add_input("len_pct", "Equivalent Lenght [0.6-0.9]", "0.8")
         self._add_input("rounding", "Throat Rounding Factor [TRF]", "2.00")
         
@@ -413,9 +357,8 @@ class App(ctk.CTk):
         self.chk_cone = ctk.CTkCheckBox(self.sidebar, text="Show Conical Ref.",
                                         variable=self.chk_cone_var,
                                         command=self.refresh_plot_only)
-        self.chk_cone.pack(pady=(15, 20), padx=20, anchor="w") # Aumentei um pouco o padding final
+        self.chk_cone.pack(pady=(15, 20), padx=20, anchor="w")
         
-        # --- REMOVIDO: Botões Run e Manual foram deletados daqui ---
 
     def change_solver(self, choice: str):
         """Troca o solver e ajusta a interface (ativa/desativa inputs)."""
@@ -428,29 +371,24 @@ class App(ctk.CTk):
                 self.calculator = solver_class()
                 self.current_solver_name = choice
                 
-                # --- LÓGICA DE UI DINÂMICA ---
                 is_moc = "Characteristics" in choice
                 
                 if is_moc:
-                    # 1. Desativar inputs inúteis para MOC
                     self._set_input_state("ang_div", "disabled")
                     self._set_input_state("len_pct", "disabled")
                     
-                    # 2. Remover aba de Sensibilidade (não faz sentido no MOC pois L é fixo)
+                    # moc solver dont use sensibility coz lenght is fixed
                     if "Sensitivity Analysis" in self.tabview._name_list:
                         self.tabview.delete("Sensitivity Analysis")
                         
-                else: # Bell Nozzle
-                    # 1. Reativar inputs
+                else: #just a correction when user go back from moc to rao
                     self._set_input_state("ang_div", "normal")
                     self._set_input_state("len_pct", "normal")
                     
-                    # 2. Restaurar aba se sumiu
                     if "Sensitivity Analysis" not in self.tabview._name_list:
                         self.tabview.insert(2, "Sensitivity Analysis") 
                         self._setup_sensitivity_plot()
 
-                # Feedback visual
                 print(f"UI Atualizada para modo: {'MOC' if is_moc else 'Bell'}")
                 
             except Exception as e:
@@ -461,14 +399,12 @@ class App(ctk.CTk):
         frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         frame.pack(pady=3, padx=20, fill="x")
         
-        # Verifica se este input tem unidade configurável
         current_unit = self.unit_prefs.get(key, "")
         display_text = f"{label_base_text} ({current_unit})" if current_unit else label_base_text
         
         lbl = ctk.CTkLabel(frame, text=display_text, anchor="w")
         lbl.pack(fill="x")
         
-        # ARMAZENA A REFERÊNCIA DA LABEL E O TEXTO BASE
         self.input_labels[key] = {
             "widget": lbl,
             "base_text": label_base_text
@@ -494,25 +430,20 @@ class App(ctk.CTk):
         """
         Configura a área principal (Direita), separando a Toolbar do Conteúdo.
         """
-        # MUDANÇA AQUI: row=1
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.grid(row=1, column=1, sticky="nsew", padx=0, pady=0) # <--- ALTERADO PARA ROW 1
+        self.main_frame.grid(row=1, column=1, sticky="nsew", padx=0, pady=0)
         
-        # 1. Action Toolbar (Simplificada)
-        self._create_action_bar() # Renomeei para ficar claro
+        self._create_action_bar()
         
-        # 2. Tabs
         self.tabview = ctk.CTkTabview(self.main_frame)
         self.tabview.pack(fill="both", expand=True, padx=15, pady=(5, 15))
         
-        # --- Configuração das Abas (Mantida, apenas organizada) ---
         self.tab_plot = self.tabview.add("2D Visualization")
         self.tab_data = self.tabview.add("Technical Data")
         self.tab_sens = self.tabview.add("Sensitivity Analysis")
         self.tab_sep = self.tabview.add("*Flow Separation")
         self.tab_3d = self.tabview.add("3D View")
         
-        # --- INICIALIZAÇÃO DOS PLOTS (Mantida a lógica original) ---
         self._init_plots()
 
     def _create_action_bar(self) -> None:
@@ -523,8 +454,7 @@ class App(ctk.CTk):
         toolbar_frame = ctk.CTkFrame(self.main_frame, height=50, corner_radius=5, fg_color="#2B2B2B")
         toolbar_frame.pack(fill="x", side="top", padx=15, pady=(10, 10))
         
-        # --- ESQUERDA: AÇÃO PRINCIPAL (COMPUTE) ---
-        # Botão Verde Grande e Chamativo
+        # compute button
         self.btn_run = ctk.CTkButton(toolbar_frame, text="▶  COMPUTE GEOMETRY", 
                                      command=self.run_simulation,
                                      width=200, height=32,
@@ -534,12 +464,11 @@ class App(ctk.CTk):
         self.btn_run.pack(side="left", padx=10, pady=8)
         ToolTip(self.btn_run, "Run Simulation (Ctrl+R)")
 
-        # --- DIREITA: VISUALIZAÇÃO E AJUDA ---
-        # Grupo alinhado à direita
+        # right group
         grp_right = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
         grp_right.pack(side="right", padx=10)
 
-        # Botão Refit (Laranja)
+        # refit button
         self.btn_reset_view = ctk.CTkButton(grp_right, text="⟲ Refit View", command=self.reset_view,
                                             width=100, height=28,
                                             font=ctk.CTkFont(size=12),
@@ -547,10 +476,9 @@ class App(ctk.CTk):
         self.btn_reset_view.pack(side="left", padx=5)
         ToolTip(self.btn_reset_view, "Reset Zoom and Pan")
 
-        # Divisor pequeno
         ctk.CTkFrame(grp_right, width=1, height=20, fg_color="#555555").pack(side="left", padx=5)
 
-        # Botão Help (Discreto)
+        # help button
         self.btn_manual = ctk.CTkButton(grp_right, text="📘 Help", command=self.open_manual,
                                         width=70, height=28,
                                         font=ctk.CTkFont(size=12),
@@ -567,11 +495,11 @@ class App(ctk.CTk):
         
         ctk.CTkLabel(win, text="Unit Settings", font=("Arial", 16, "bold")).pack(pady=15)
         
-        # Container para os dropdowns
+        # dropdowns container
         form = ctk.CTkFrame(win, fg_color="transparent")
         form.pack(fill="both", expand=True, padx=20)
         
-        # Dicionário temporário para guardar as escolhas antes de salvar
+        # save choices 
         temp_vars = {}
 
         def add_combo(label, key, options):
@@ -585,20 +513,16 @@ class App(ctk.CTk):
             combo = ctk.CTkOptionMenu(row, variable=var, values=options, width=100)
             combo.pack(side="right")
 
-        # Criação dos campos
         add_combo("Throat Radius (Length):", "tr", ["mm", "cm", "m", "in", "ft"])
         add_combo("Chamber Pressure:", "pc", ["MPa", "Pa", "psi", "ksi", "atm"])
         add_combo("Exhaust Pressure:", "pe", ["atm", "Pa", "MPa", "psi", "ksi"])
 
         def apply_changes():
-            # 1. Recupera valores antigos e novos
             old_prefs = self.unit_prefs.copy()
             new_prefs = {k: v.get() for k, v in temp_vars.items()}
             
-            # 2. Atualiza Labels e Converte Valores nos Inputs
             self._update_units_ui(old_prefs, new_prefs)
             
-            # 3. Salva estado
             self.unit_prefs = new_prefs
             win.destroy()
 
@@ -610,13 +534,10 @@ class App(ctk.CTk):
             old_unit = old_prefs[key]
             if key not in self.inputs: continue
             
-            # A. Atualiza Label
             if key in self.input_labels:
                 data = self.input_labels[key]
                 data["widget"].configure(text=f"{data['base_text']} ({new_unit})")
             
-            # B. Converte Valor no Input (UX Premium)
-            # Se mudou de mm para m, o valor 1000 deve virar 1
             if old_unit != new_unit:
                 try:
                     current_val_str = self.inputs[key].get()
@@ -625,11 +546,9 @@ class App(ctk.CTk):
                     val = float(current_val_str)
                     category = self.unit_categories[key]
                     
-                    # Passo 1: Converte do Antigo para a Base (ex: m -> mm)
                     val_in_base = UnitManager.convert(val, old_unit, category, reverse=False)
                     
-                    # Passo 2: Converte da Base para o Novo (ex: mm -> cm)
-                    # Para ir da Base -> Display, usamos reverse=True
+
                     val_new_display = UnitManager.convert(val_in_base, new_unit, category, reverse=True)
                     
                     self.inputs[key].delete(0, tk.END)
@@ -1137,7 +1056,7 @@ class App(ctk.CTk):
                     'pc': self._get_converted_value('pc'),           # Retorna sempre MPa
                     'pe': self._get_converted_value('pe'),           # Retorna sempre atm
                     'ang_div': float(self.inputs['ang_div'].get()),
-                    'ang_cov': float(self.inputs['ang_cov'].get()),
+                    'ang_cov': -90 - float(self.inputs['ang_cov'].get()),
                     'length_pct': float(self.inputs['len_pct'].get()),
                     'rounding_factor': float(self.inputs['rounding'].get()),
                 }

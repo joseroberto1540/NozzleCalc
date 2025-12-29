@@ -5,3 +5,4 @@ requests
 packaging
 Pillow
 pyinstaller
+ezdxf>=1.1.0

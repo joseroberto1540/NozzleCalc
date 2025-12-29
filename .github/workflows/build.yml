@@ -30,7 +30,7 @@ jobs:
     - name: 🔨 Criando Executável (PyInstaller)
       # Aqui usamos o seu comando exato, adaptado para rodar no servidor
       run: |
-        pyinstaller --noconsole --onefile --name="NozzleCalc" --icon="icon3.ico" --collect-all customtkinter --add-data "icon3.ico;." main.py
+        pyinstaller --noconsole --onefile --name="NozzleCalc" --icon="icon3.ico" --collect-all customtkinter --add-data "icon3.ico;." --hidden-import=ezdxf main.py
 
     - name: 🚀 Publicando Release no GitHub
       uses: softprops/action-gh-release@v1
