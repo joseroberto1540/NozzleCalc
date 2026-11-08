@@ -5,9 +5,11 @@
 
 ## 📖 Overview
 
-**NozzleCalc Pro** is a specialized engineering software developed by the **Propulsion Sector of Kosmos Rocketry**. It is designed to calculate, optimize, and visualize the geometry of rocket engine nozzles using the **Rao Approximation (Bell Nozzle)** method.
+**NozzleCalc Pro** is a specialized engineering software developed by **José Roberto dos Santos Carmo**. It is designed to calculate, optimize, and visualize the geometry of rocket engine nozzles using the **Rao Approximation (Bell Nozzle)** method.
 
 Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing exhaust gases more parallel to the nozzle axis. This tool automates the complex method of characteristics required to design these contours, providing immediate visual feedback, physical validation, and manufacturing data.
+
+The tool has been evaluated in practice by an experimental sounding rocket competition team.
 
 ---
 
@@ -88,12 +90,12 @@ For a deep dive into the equations, click the **"📘 Theory Manual"** button in
 
 ## 📜 License & Attribution
 
-**© Kosmos Rocketry - Propulsion Sector**
+**© José Roberto dos Santos Carmo**
 
 This software is provided "as is" for educational and engineering development purposes.
 
-* **Attribution:** Any use of this software, screenshots, or data derived from it in academic papers, commercial projects, or public displays must explicitly credit **Kosmos Rocketry**.
+* **Attribution:** Any use of this software, screenshots, or data derived from it in academic papers, commercial projects, or public displays must explicitly credit the author, **José Roberto dos Santos Carmo**.
 * **Liability:** The developers are not responsible for hardware failures resulting from the use of these geometries. Always verify designs with CFD analysis before manufacturing.
 
 ---
-*[Report a Bug](https://github.com/joseroberto1540/NozzleCalc/issues) | [Visit Kosmos Rocketry](https://instagram.com/kosmosrocketry)*
+*[Report a Bug](https://github.com/joseroberto1540/NozzleCalc/issues) | [Author's GitHub](https://github.com/joseroberto1540)*
