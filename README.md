@@ -9,7 +9,13 @@ NozzleCalc Pro is a specialized engineering software developed by José Roberto 
 
 Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing exhaust gases more parallel to the nozzle axis. This tool automates the complex method of characteristics required to design these contours, providing immediate visual feedback, physical validation, and manufacturing data.
 
+**Who it's for:** student and amateur rocketry teams, propulsion students and engineers who need a fast, validated bell nozzle contour for solid, liquid or hybrid motors.
+
+**Built with:** Python 3.11, CustomTkinter (UI), NumPy, Matplotlib (plots) and ezdxf (DXF export). Windows executables are built with PyInstaller by GitHub Actions on every release.
+
 The tool has been evaluated in practice by an experimental sounding rocket competition team.
+
+**Project history:** NozzleCalc was started in 2025 as a personal project of the author, initially with a student rocketry team in mind. It was developed entirely on the author's own time and resources, with no academic, institutional or team funding. It is now maintained as an independent open-source tool that any rocketry team can use and contribute to.
 
 ---
 
@@ -21,6 +27,24 @@ No Python installation is required. Just download, run, and design.
 1.  Go to the **[Latest Release Page](https://github.com/joseroberto1540/NozzleCalc/releases)**.
 2.  Download the `NozzleCalc.exe` file.
 3.  Run the file. *(Windows might flag it as unrecognized software; this is normal for unsigned engineering tools. Click "Run Anyway").*
+
+### Run from Source
+Requires Python 3.11 or newer.
+
+```bash
+git clone https://github.com/joseroberto1540/NozzleCalc.git
+cd NozzleCalc
+python -m venv .venv
+# Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+### Build the Executable
+```bash
+pyinstaller --noconsole --onefile --name="NozzleCalc" --icon="icon3.ico" --collect-all customtkinter --add-data "icon3.ico;." --hidden-import=ezdxf main.py
+```
+The output is written to `dist/`, which is ignored by Git. Official builds are produced by the workflow in `.github/workflows/build.yml` when a `v*` tag is pushed.
 
 ---
 
@@ -39,7 +63,7 @@ No Python installation is required. Just download, run, and design.
 * **Convergence Checker:** Real-time validation engine that checks for physical impossibilities, such as inverted curvature or loop-backs. Displays a **GREEN (Converged)** or **RED (Diverged)** status instantly.
 * **Throat Rounding Factor:** Fine-tune the curvature radius at the throat ($R_{div}$) to adjust for manufacturing constraints or thermal considerations.
 * **Conical Comparison:** Toggle a 15° (or custom angle) conical nozzle reference overlay to visualize length and mass savings.
-* **Efficiente Calculation:** A well-designed Bell nozzle readily achieves an efficiency factor of at least 96.5%, even while being shorter than an equivalent conical nozzle. The system allows users to generate the nozzle profile and evaluate its efficiency in real-time.
+* **Efficiency Calculation:** A well-designed Bell nozzle readily achieves an efficiency factor of at least 96.5%, even while being shorter than an equivalent conical nozzle. The system allows users to generate the nozzle profile and evaluate its efficiency in real-time.
 
 ### 🖥️ Interactive Visualization
 * **Dynamic Plotting:** High-resolution rendering using Matplotlib embedded in a modern UI.
@@ -90,12 +114,10 @@ For a deep dive into the equations, click the **"📘 Theory Manual"** button in
 
 ## 📜 License & Attribution
 
-**© José Roberto dos Santos Carmo**
+NozzleCalc is released under the **[MIT License](LICENSE)**. Copyright (c) 2025 José Roberto dos Santos Carmo.
 
-This software is provided "as is" for educational and engineering development purposes.
-
-* **Attribution:** Any use of this software, screenshots, or data derived from it in academic papers, commercial projects, or public displays must explicitly credit the author, **José Roberto dos Santos Carmo**.
-* **Liability:** The developers are not responsible for hardware failures resulting from the use of these geometries. Always verify designs with CFD analysis before manufacturing.
+* **Citation:** If you use NozzleCalc, its screenshots or data derived from it in academic papers, competition reports, commercial projects or public displays, please credit the author, **José Roberto dos Santos Carmo**, and link to this repository.
+* **Liability:** The software is provided "as is", without warranty of any kind. The author is not responsible for hardware failures resulting from the use of these geometries. Always verify designs with CFD analysis before manufacturing.
 
 ---
 *[Report a Bug](https://github.com/joseroberto1540/NozzleCalc/issues) | [Author's GitHub](https://github.com/joseroberto1540)*
