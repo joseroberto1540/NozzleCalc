@@ -5,7 +5,7 @@
 
 ## 📖 Overview
 
-**NozzleCalc Pro** is a specialized engineering software developed by **José Roberto dos Santos Carmo**. It is designed to calculate, optimize, and visualize the geometry of rocket engine nozzles using the **Rao Approximation (Bell Nozzle)** method.
+NozzleCalc Pro is a specialized engineering software developed by José Roberto dos Santos Carmo, an Aerospace Engineering student. It is designed to calculate, optimize, and visualize the geometry of rocket engine nozzles using the **Rao Approximation (Bell Nozzle)** method.
 
 Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing exhaust gases more parallel to the nozzle axis. This tool automates the complex method of characteristics required to design these contours, providing immediate visual feedback, physical validation, and manufacturing data.
 
