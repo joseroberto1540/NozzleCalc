@@ -15,7 +15,7 @@ Unlike simple conical nozzles, Bell nozzles offer higher efficiency by directing
 
 The tool has been evaluated in practice by an experimental sounding rocket competition team.
 
-**Project history:** NozzleCalc was started in 2025 as a personal project of the author, initially with a student rocketry team in mind. It was developed entirely on the author's own time and resources, with no academic, institutional or team funding. It is now maintained as an independent open-source tool that any rocketry team can use and contribute to.
+**Project history:** NozzleCalc started in 2023 as a personal project of the author, initially with a student rocketry team in mind. The author built the entire calculation core from published nozzle design theory and wrote the original code; that validated mathematical core has remained unchanged since. In 2025 the code was published on GitHub and the graphical interface was added, developed with AI assistance. The project was developed entirely on the author's own time and resources, with no academic, institutional or team funding, and is now maintained as an independent open-source tool that any rocketry team can use and contribute to.
 
 ---
 
@@ -114,7 +114,7 @@ For a deep dive into the equations, click the **"📘 Theory Manual"** button in
 
 ## 📜 License & Attribution
 
-NozzleCalc is released under the **[MIT License](LICENSE)**. Copyright (c) 2025 José Roberto dos Santos Carmo.
+NozzleCalc is released under the **[MIT License](LICENSE)**. Copyright (c) 2023-2025 José Roberto dos Santos Carmo.
 
 * **Citation:** If you use NozzleCalc, its screenshots or data derived from it in academic papers, competition reports, commercial projects or public displays, please credit the author, **José Roberto dos Santos Carmo**, and link to this repository.
 * **Liability:** The software is provided "as is", without warranty of any kind. The author is not responsible for hardware failures resulting from the use of these geometries. Always verify designs with CFD analysis before manufacturing.
