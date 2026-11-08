@@ -48,7 +48,7 @@ def release_new_version():
     commands = [
         "git add .",  # Adiciona as novas pastas (core, ui, solvers)
         f'git commit -m "Release {tag_name} - Refactor & Update"',
-        "git push origin main --force", # CUIDADO: Force push reescreve histórico
+        "git push origin main",  # Sem --force: preserva o histórico de commits
         f"git tag {tag_name}",
         f"git push origin {tag_name}"   # Dispara o GitHub Actions
     ]
